@@ -1,0 +1,8 @@
+{
+  "name": "LimurProject — Дашборд дизайн-проекта",
+  "description": "Веб-приложение студии интерьерного дизайна LimurProject: контроль этапов, диаграмма Ганта, финансовая аналитика и синхронизация через GitHub Gist.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
