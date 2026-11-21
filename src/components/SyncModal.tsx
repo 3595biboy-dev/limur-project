@@ -1,35 +1,39 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertCircle,
+  Check,
+  CheckCircle2,
   Cloud,
   Copy,
-  Check,
   Download,
+  Link2,
   RefreshCw,
   RotateCcw,
+  Unlink,
   Upload,
   X,
-  CheckCircle2,
-  AlertCircle,
-  Unlink,
-  Link2,
 } from 'lucide-react';
-import { DashboardData } from '../types/dashboard';
-import { TOKEN_STORAGE_KEY, normalizeDashboardData } from '../data/defaultData';
+import { MultiProjectStore } from '../types/dashboard';
+import {
+  TOKEN_STORAGE_KEY,
+  normalizeMultiProjectStore,
+} from '../data/defaultData';
 
 interface SyncModalProps {
   isOpen: boolean;
   onClose: () => void;
   token: string;
   gistId: string;
+  activeProjectId: string;
   lastSyncedAt: string | null;
   syncError: string | null;
   isBusy: boolean;
-  data: DashboardData;
+  store: MultiProjectStore;
   onSaveToken: (token: string) => void;
   onSaveConfigAndSync: (token: string, gistId: string) => Promise<void>;
   onPullFromGist: (token: string, gistId: string) => Promise<void>;
   onDisconnectGist: () => void;
-  onImportJson: (imported: DashboardData) => void;
+  onImportJson: (imported: MultiProjectStore) => void;
   onResetDefault: () => void;
 }
 
@@ -38,10 +42,11 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   onClose,
   token,
   gistId,
+  activeProjectId,
   lastSyncedAt,
   syncError,
   isBusy,
-  data,
+  store,
   onSaveToken,
   onSaveConfigAndSync,
   onPullFromGist,
@@ -67,16 +72,19 @@ export const SyncModal: React.FC<SyncModalProps> = ({
     }
   }, [isOpen, token, gistId]);
 
-  const clientShareUrl = useMemo(() => {
+  const viewShareUrl = useMemo(() => {
     const url = new URL(window.location.href);
     url.search = '';
+    url.searchParams.set('mode', 'view');
+    if (activeProjectId) {
+      url.searchParams.set('project', activeProjectId);
+    }
     const activeGist = gistIdInput.trim() || gistId.trim();
     if (activeGist) {
       url.searchParams.set('gist', activeGist);
     }
-    url.searchParams.set('mode', 'client');
     return url.toString();
-  }, [gistIdInput, gistId]);
+  }, [gistIdInput, gistId, activeProjectId]);
 
   if (!isOpen) return null;
 
@@ -94,10 +102,10 @@ export const SyncModal: React.FC<SyncModalProps> = ({
 
   const handleCopyShareUrl = async () => {
     try {
-      await navigator.clipboard.writeText(clientShareUrl);
+      await navigator.clipboard.writeText(viewShareUrl);
     } catch {
       const textarea = document.createElement('textarea');
-      textarea.value = clientShareUrl;
+      textarea.value = viewShareUrl;
       textarea.style.position = 'fixed';
       textarea.style.opacity = '0';
       document.body.appendChild(textarea);
@@ -133,13 +141,13 @@ export const SyncModal: React.FC<SyncModalProps> = ({
   };
 
   const handleDownloadBackup = () => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
+    const blob = new Blob([JSON.stringify(store, null, 2)], {
       type: 'application/json;charset=utf-8',
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `limur-project-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `limur-projects-backup-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -157,7 +165,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({
     reader.onload = () => {
       try {
         const parsed = JSON.parse(String(reader.result));
-        const normalized = normalizeDashboardData(parsed);
+        const normalized = normalizeMultiProjectStore(parsed);
         onImportJson(normalized);
         setLocalMsg('Данные успешно восстановлены из файла JSON.');
       } catch {
@@ -176,7 +184,7 @@ export const SyncModal: React.FC<SyncModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#1F1D1A]/50 backdrop-blur-xs p-4"
+      className="no-print fixed inset-0 z-50 flex items-center justify-center bg-[#1F1D1A]/50 backdrop-blur-xs p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="sync-modal-title"
@@ -211,7 +219,8 @@ export const SyncModal: React.FC<SyncModalProps> = ({
                   htmlFor="gh-token-input"
                   className="block text-xs font-semibold text-[#1F1D1A]"
                 >
-                  GitHub Personal Access Token (право <code className="text-[#B8956A]">gist</code>)
+                  GitHub Personal Access Token (право{' '}
+                  <code className="text-[#B8956A]">gist</code>)
                 </label>
                 <button
                   type="button"
@@ -230,7 +239,8 @@ export const SyncModal: React.FC<SyncModalProps> = ({
                 className="w-full text-sm text-[#1F1D1A] bg-[#FAF8F5] border border-[#E6DFD5] focus:border-[#B8956A] focus:outline-none rounded-lg px-3.5 py-2.5"
               />
               <p className="text-[11px] text-[#7A736A]">
-                Хранится только в вашем браузере (<code className="text-[#4A453E]">localStorage</code>).
+                Хранится только в вашем браузере (
+                <code className="text-[#4A453E]">localStorage</code>).
               </p>
             </div>
 
@@ -250,7 +260,8 @@ export const SyncModal: React.FC<SyncModalProps> = ({
                 className="w-full text-sm text-[#1F1D1A] bg-[#FAF8F5] border border-[#E6DFD5] focus:border-[#B8956A] focus:outline-none rounded-lg px-3.5 py-2.5"
               />
               <p className="text-[11px] text-[#7A736A]">
-                Если поле пустое, при сохранении автоматически создастся приватный Gist{' '}
+                Если поле пустое, при сохранении автоматически создастся приватный
+                Gist{' '}
                 <code className="text-[#4A453E]">limur-project-dashboard.json</code>.
               </p>
             </div>
@@ -282,7 +293,9 @@ export const SyncModal: React.FC<SyncModalProps> = ({
                 className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-lg bg-[#1F1D1A] text-[#FAF8F5] hover:bg-[#332F2A] disabled:opacity-60 transition-colors cursor-pointer"
               >
                 <RefreshCw
-                  className={`w-3.5 h-3.5 text-[#B8956A] ${isBusy ? 'animate-spin' : ''}`}
+                  className={`w-3.5 h-3.5 text-[#B8956A] ${
+                    isBusy ? 'animate-spin' : ''
+                  }`}
                 />
                 <span>
                   {gistIdInput.trim()
@@ -316,21 +329,21 @@ export const SyncModal: React.FC<SyncModalProps> = ({
             </div>
           </form>
 
-          {/* Shareable Client URL */}
+          {/* Shareable View URL */}
           <div className="pt-5 border-t border-[#E6DFD5] space-y-2.5">
             <div className="flex items-center gap-2">
               <Link2 className="w-3.5 h-3.5 text-[#B8956A]" />
               <h3 className="text-xs font-semibold uppercase tracking-wider text-[#7A736A]">
-                Ссылка для клиента (Вид для Лили)
+                Ссылка для просмотра (Режим Просмотра)
               </h3>
             </div>
             <div className="flex items-center gap-2">
               <input
                 type="text"
                 readOnly
-                value={clientShareUrl}
+                value={viewShareUrl}
                 onClick={(e) => (e.target as HTMLInputElement).select()}
-                aria-label="Ссылка для клиента"
+                aria-label="Ссылка для просмотра"
                 className="flex-1 min-w-0 text-xs text-[#4A453E] bg-[#FAF8F5] border border-[#E6DFD5] rounded-lg px-3 py-2 select-all"
               />
               <button
@@ -352,9 +365,8 @@ export const SyncModal: React.FC<SyncModalProps> = ({
               </button>
             </div>
             <p className="text-[11px] text-[#7A736A]">
-              {gistIdInput.trim() || gistId.trim()
-                ? 'Клиент откроет актуальную версию дашборда с автообновлением в режиме чтения.'
-                : 'Подключите Gist выше, чтобы ссылка содержала параметр ?gist=ID&mode=client.'}
+              Открывает выбранный проект в заблокированном режиме чтения без
+              возможности переключения в режим автора.
             </p>
           </div>
 

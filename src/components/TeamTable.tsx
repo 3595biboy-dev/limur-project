@@ -39,7 +39,7 @@ export const TeamTable: React.FC<TeamTableProps> = ({
   const showTable = isEditor || clientExpanded;
 
   return (
-    <section className="bg-white border border-[#E6DFD5] rounded-xl overflow-hidden">
+    <section className="bg-white border border-[#E6DFD5] rounded-xl overflow-hidden print-break-avoid">
       <div className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="font-serif-display text-2xl font-bold text-[#1F1D1A]">
@@ -50,7 +50,7 @@ export const TeamTable: React.FC<TeamTableProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="no-print flex items-center gap-3 shrink-0">
           {!isEditor ? (
             <button
               type="button"
@@ -90,7 +90,7 @@ export const TeamTable: React.FC<TeamTableProps> = ({
                 <th className="py-3 px-4 text-right">Оплачено</th>
                 <th className="py-3 px-4 text-right">Осталось оплатить</th>
                 <th className="py-3 px-6 text-right">Доля (%)</th>
-                {isEditor && <th className="py-3 px-4 w-12" />}
+                {isEditor && <th className="no-print py-3 px-4 w-12" />}
               </tr>
             </thead>
 
@@ -195,7 +195,7 @@ export const TeamTable: React.FC<TeamTableProps> = ({
                       </td>
 
                       {isEditor && (
-                        <td className="py-3 px-4 text-right">
+                        <td className="no-print py-3 px-4 text-right">
                           <button
                             type="button"
                             onClick={() => onDeleteTeamItem(item.id)}
@@ -241,7 +241,7 @@ export const TeamTable: React.FC<TeamTableProps> = ({
                   <td className="py-3.5 px-6 text-right tabular-nums">
                     {totalTeamCost > 0 ? '100.00%' : '0.00%'}
                   </td>
-                  {isEditor && <td />}
+                  {isEditor && <td className="no-print" />}
                 </tr>
               </tfoot>
             )}

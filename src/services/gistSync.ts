@@ -1,10 +1,10 @@
-import { GIST_FILENAME, normalizeDashboardData } from '../data/defaultData';
-import { DashboardData } from '../types/dashboard';
+import { GIST_FILENAME, normalizeMultiProjectStore } from '../data/defaultData';
+import { MultiProjectStore } from '../types/dashboard';
 
 export interface FetchGistResult {
   status: 'not-modified' | 'updated';
   etag: string | null;
-  data?: DashboardData;
+  data?: MultiProjectStore;
 }
 
 function buildHeaders(token?: string, etag?: string | null): HeadersInit {
@@ -30,11 +30,14 @@ export async function fetchGistWithEtag(
     throw new Error('Не указан Gist ID');
   }
 
-  const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(cleanId)}`, {
-    method: 'GET',
-    headers: buildHeaders(token, etag),
-    cache: 'no-store',
-  });
+  const response = await fetch(
+    `https://api.github.com/gists/${encodeURIComponent(cleanId)}`,
+    {
+      method: 'GET',
+      headers: buildHeaders(token, etag),
+      cache: 'no-store',
+    }
+  );
 
   if (response.status === 304) {
     return {
@@ -70,7 +73,7 @@ export async function fetchGistWithEtag(
   }
 
   const parsed = JSON.parse(targetFile.content);
-  const data = normalizeDashboardData(parsed);
+  const data = normalizeMultiProjectStore(parsed);
 
   return {
     status: 'updated',
@@ -80,7 +83,7 @@ export async function fetchGistWithEtag(
 }
 
 export async function createPrivateGist(
-  data: DashboardData,
+  store: MultiProjectStore,
   token: string
 ): Promise<{ gistId: string; etag: string | null }> {
   const cleanToken = token.trim();
@@ -89,11 +92,15 @@ export async function createPrivateGist(
   }
 
   const payload = {
-    description: 'LimurProject — Дашборд дизайн-проекта',
+    description: 'LimurProject — Дашборд дизайн-проектов',
     public: false,
     files: {
       [GIST_FILENAME]: {
-        content: JSON.stringify({ ...data, updatedAt: new Date().toISOString() }, null, 2),
+        content: JSON.stringify(
+          { ...store, updatedAt: new Date().toISOString() },
+          null,
+          2
+        ),
       },
     },
   };
@@ -125,7 +132,7 @@ export async function createPrivateGist(
 
 export async function updateGist(
   gistId: string,
-  data: DashboardData,
+  store: MultiProjectStore,
   token: string
 ): Promise<{ etag: string | null }> {
   const cleanId = gistId.trim();
@@ -137,20 +144,27 @@ export async function updateGist(
   const payload = {
     files: {
       [GIST_FILENAME]: {
-        content: JSON.stringify({ ...data, updatedAt: new Date().toISOString() }, null, 2),
+        content: JSON.stringify(
+          { ...store, updatedAt: new Date().toISOString() },
+          null,
+          2
+        ),
       },
     },
   };
 
-  const response = await fetch(`https://api.github.com/gists/${encodeURIComponent(cleanId)}`, {
-    method: 'PATCH',
-    headers: {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${cleanToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
+  const response = await fetch(
+    `https://api.github.com/gists/${encodeURIComponent(cleanId)}`,
+    {
+      method: 'PATCH',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${cleanToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    }
+  );
 
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {

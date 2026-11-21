@@ -38,7 +38,7 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
           <button
             type="button"
             onClick={onAddStage}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg bg-[#1F1D1A] text-[#FAF8F5] hover:bg-[#332F2A] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B8956A]"
+            className="no-print inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg bg-[#1F1D1A] text-[#FAF8F5] hover:bg-[#332F2A] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B8956A]"
           >
             <Plus className="w-3.5 h-3.5 text-[#B8956A]" />
             <span>Добавить этап</span>
@@ -55,7 +55,7 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
           {stages.map((stage) => (
             <div
               key={stage.id}
-              className="bg-white border border-[#E6DFD5] rounded-xl p-5 flex flex-col justify-between gap-4"
+              className="bg-white border border-[#E6DFD5] rounded-xl p-5 flex flex-col justify-between gap-4 print-break-avoid"
             >
               {/* Top row: Stage name + delete in editor */}
               <div className="space-y-3">
@@ -81,7 +81,7 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
                       type="button"
                       onClick={() => onDeleteStage(stage.id)}
                       aria-label={`Удалить этап ${stage.name}`}
-                      className="p-1.5 text-[#7A736A] hover:text-[#C46D5E] hover:bg-[#FAF0EE] rounded-md transition-colors shrink-0 cursor-pointer"
+                      className="no-print p-1.5 text-[#7A736A] hover:text-[#C46D5E] hover:bg-[#FAF0EE] rounded-md transition-colors shrink-0 cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>

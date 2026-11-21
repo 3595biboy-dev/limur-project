@@ -5,11 +5,12 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  DEFAULT_DASHBOARD_DATA,
+  DEFAULT_STORE,
   GIST_ID_STORAGE_KEY,
   TOKEN_STORAGE_KEY,
-  loadDashboardFromStorage,
-  saveDashboardToStorage,
+  createNewProjectTemplate,
+  loadStoreFromStorage,
+  saveStoreToStorage,
 } from './data/defaultData';
 import {
   createPrivateGist,
@@ -17,27 +18,40 @@ import {
   updateGist,
 } from './services/gistSync';
 import {
-  DashboardData,
+  MultiProjectStore,
+  ProjectDocument,
+  ProjectRecord,
   ProjectStage,
   SyncState,
   TeamExpense,
   ViewMode,
 } from './types/dashboard';
 import { Header } from './components/Header';
+import { ProjectWorkspaceBar } from './components/ProjectWorkspaceBar';
 import { ProjectHeroSection } from './components/ProjectHeroSection';
 import { GanttChart } from './components/GanttChart';
 import { StagesGrid } from './components/StagesGrid';
 import { FinancialCharts } from './components/FinancialCharts';
 import { TeamTable } from './components/TeamTable';
+import { ArchiveSection } from './components/ArchiveSection';
 import { SyncModal } from './components/SyncModal';
 
-function getInitialUrlParams(): { mode: ViewMode; urlGistId: string } {
+function getInitialUrlParams(): {
+  mode: ViewMode;
+  isLockedView: boolean;
+  urlGistId: string;
+  urlProjectId: string;
+} {
   const params = new URLSearchParams(window.location.search);
   const modeParam = params.get('mode');
+  const isViewMode = modeParam === 'view' || modeParam === 'client';
   const gistParam = params.get('gist')?.trim() || '';
+  const projectParam = params.get('project')?.trim() || '';
   return {
-    mode: modeParam === 'client' ? 'client' : 'editor',
+    mode: isViewMode ? 'view' : 'editor',
+    isLockedView: isViewMode,
     urlGistId: gistParam,
+    urlProjectId: projectParam,
   };
 }
 
@@ -49,11 +63,36 @@ function formatNowTime(): string {
   });
 }
 
+function sortProjectsByDate(
+  list: ProjectRecord[],
+  order: 'newest' | 'oldest'
+): ProjectRecord[] {
+  return [...list].sort((a, b) => {
+    const cmp = a.projectDate.localeCompare(b.projectDate);
+    if (cmp !== 0) {
+      return order === 'newest' ? -cmp : cmp;
+    }
+    const createdCmp = a.createdAt.localeCompare(b.createdAt);
+    return order === 'newest' ? -createdCmp : createdCmp;
+  });
+}
+
 export default function App() {
   const initialParams = useMemo(() => getInitialUrlParams(), []);
 
   const [mode, setMode] = useState<ViewMode>(initialParams.mode);
-  const [data, setData] = useState<DashboardData>(() => loadDashboardFromStorage());
+  const isLockedView = initialParams.isLockedView;
+
+  const [store, setStore] = useState<MultiProjectStore>(() => {
+    const loaded = loadStoreFromStorage();
+    if (
+      initialParams.urlProjectId &&
+      loaded.projects.some((p) => p.id === initialParams.urlProjectId)
+    ) {
+      return { ...loaded, activeProjectId: initialParams.urlProjectId };
+    }
+    return loaded;
+  });
 
   const [token, setToken] = useState<string>(() => {
     try {
@@ -85,15 +124,15 @@ export default function App() {
 
   const etagRef = useRef<string | null>(null);
   const hasPendingLocalPushRef = useRef<boolean>(false);
-  const dataRef = useRef<DashboardData>(data);
-  dataRef.current = data;
+  const storeRef = useRef<MultiProjectStore>(store);
+  storeRef.current = store;
 
-  // Persist data to localStorage on every change
+  // Persist store to localStorage on every change
   useEffect(() => {
-    saveDashboardToStorage(data);
-  }, [data]);
+    saveStoreToStorage(store);
+  }, [store]);
 
-  // Persist URL gistId if provided and not yet stored
+  // Persist URL gistId if provided
   useEffect(() => {
     if (initialParams.urlGistId) {
       try {
@@ -106,7 +145,7 @@ export default function App() {
 
   // Debounced PATCH to Gist in Editor Mode (1.2s)
   useEffect(() => {
-    if (mode !== 'editor') return;
+    if (mode !== 'editor' || isLockedView) return;
     if (!hasPendingLocalPushRef.current) return;
     if (!gistId.trim() || !token.trim()) return;
 
@@ -114,7 +153,7 @@ export default function App() {
       try {
         setSyncState('syncing');
         setSyncError(null);
-        const res = await updateGist(gistId, dataRef.current, token);
+        const res = await updateGist(gistId, storeRef.current, token);
         etagRef.current = res.etag;
         hasPendingLocalPushRef.current = false;
         setSyncState('online');
@@ -122,12 +161,14 @@ export default function App() {
       } catch (err) {
         hasPendingLocalPushRef.current = false;
         setSyncState('error');
-        setSyncError(err instanceof Error ? err.message : 'Ошибка отправки в Gist');
+        setSyncError(
+          err instanceof Error ? err.message : 'Ошибка отправки в Gist'
+        );
       }
     }, 1200);
 
     return () => window.clearTimeout(timer);
-  }, [data, gistId, token, mode]);
+  }, [store, gistId, token, mode, isLockedView]);
 
   // Real-time ETag polling every 5 seconds whenever gistId is present
   useEffect(() => {
@@ -153,9 +194,21 @@ export default function App() {
 
         if (result.status === 'updated' && result.data) {
           etagRef.current = result.etag;
-          // Apply remote state without marking as local dirty push
           hasPendingLocalPushRef.current = false;
-          setData(result.data);
+          setStore((prev) => {
+            const remote = result.data!;
+            // Keep locked URL project if present in remote, otherwise keep user's current selection if valid
+            const preferredId = initialParams.urlProjectId || prev.activeProjectId;
+            const hasPreferred = remote.projects.some(
+              (p) => p.id === preferredId
+            );
+            return {
+              ...remote,
+              activeProjectId: hasPreferred
+                ? preferredId
+                : remote.activeProjectId,
+            };
+          });
           setLastSyncedAt(formatNowTime());
         }
         setSyncState('online');
@@ -169,37 +222,93 @@ export default function App() {
       }
     };
 
-    // Initial fetch immediately
     pollOnce();
-
     const intervalId = window.setInterval(pollOnce, 5000);
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [gistId, token]);
+  }, [gistId, token, initialParams.urlProjectId]);
 
-  // Helper to apply local user edits
-  const updateLocalData = useCallback(
-    (updater: (prev: DashboardData) => DashboardData) => {
+  // Helper to mutate store locally
+  const updateLocalStore = useCallback(
+    (updater: (prev: MultiProjectStore) => MultiProjectStore) => {
       hasPendingLocalPushRef.current = Boolean(gistId.trim() && token.trim());
-      setData((prev) => updater(prev));
+      setStore((prev) => updater(prev));
     },
     [gistId, token]
   );
 
-  // Derived Financial KPIs
+  // Selected Project & Sorted Lists
+  const selectedProject = useMemo(() => {
+    if (
+      initialParams.urlProjectId &&
+      isLockedView
+    ) {
+      const target = store.projects.find(
+        (p) => p.id === initialParams.urlProjectId
+      );
+      if (target) return target;
+    }
+    return (
+      store.projects.find((p) => p.id === store.activeProjectId) ||
+      store.projects.find((p) => p.status === 'active') ||
+      store.projects[0]
+    );
+  }, [store.projects, store.activeProjectId, initialParams.urlProjectId, isLockedView]);
+
+  const activeProjects = useMemo(
+    () =>
+      sortProjectsByDate(
+        store.projects.filter((p) => p.status === 'active'),
+        store.sortOrder
+      ),
+    [store.projects, store.sortOrder]
+  );
+
+  const archivedProjects = useMemo(
+    () =>
+      sortProjectsByDate(
+        store.projects.filter((p) => p.status === 'archived'),
+        store.sortOrder
+      ),
+    [store.projects, store.sortOrder]
+  );
+
+  // Update helper for selected project
+  const updateSelectedProject = useCallback(
+    (updater: (proj: ProjectRecord) => ProjectRecord) => {
+      updateLocalStore((prev) => ({
+        ...prev,
+        projects: prev.projects.map((proj) =>
+          proj.id === selectedProject.id ? updater(proj) : proj
+        ),
+      }));
+    },
+    [updateLocalStore, selectedProject.id]
+  );
+
+  // Derived Financial KPIs for selected project
   const metrics = useMemo(() => {
-    const totalBudget = data.stages.reduce((sum, s) => sum + s.amount, 0);
-    const paidBudget = data.stages
+    const totalBudget = selectedProject.stages.reduce(
+      (sum, s) => sum + s.amount,
+      0
+    );
+    const paidBudget = selectedProject.stages
       .filter((s) => s.paid)
       .reduce((sum, s) => sum + s.amount, 0);
     const unpaidBudget = Math.max(0, totalBudget - paidBudget);
     const closedPercent =
       totalBudget > 0 ? Math.round((paidBudget / totalBudget) * 100) : 0;
 
-    const totalTeamCost = data.team.reduce((sum, m) => sum + m.totalCost, 0);
-    const paidTeamAmount = data.team.reduce((sum, m) => sum + m.paidAmount, 0);
+    const totalTeamCost = selectedProject.team.reduce(
+      (sum, m) => sum + m.totalCost,
+      0
+    );
+    const paidTeamAmount = selectedProject.team.reduce(
+      (sum, m) => sum + m.paidAmount,
+      0
+    );
     const remainingTeamPay = Math.max(0, totalTeamCost - paidTeamAmount);
 
     return {
@@ -211,21 +320,23 @@ export default function App() {
       paidTeamAmount,
       remainingTeamPay,
     };
-  }, [data.stages, data.team]);
+  }, [selectedProject.stages, selectedProject.team]);
 
   // Mode toggle handler
   const handleToggleMode = () => {
-    setMode((prev) => (prev === 'client' ? 'editor' : 'client'));
+    if (isLockedView) return;
+    setMode((prev) => (prev === 'view' ? 'editor' : 'view'));
   };
 
-  // Copy shareable link for Lily (?gist=...&mode=client)
-  const handleCopyClientLink = async () => {
+  // Copy shareable link (?mode=view&project=<ID>&gist=<GIST_ID>)
+  const handleCopyViewLink = async () => {
     const url = new URL(window.location.href);
     url.search = '';
+    url.searchParams.set('mode', 'view');
+    url.searchParams.set('project', selectedProject.id);
     if (gistId.trim()) {
       url.searchParams.set('gist', gistId.trim());
     }
-    url.searchParams.set('mode', 'client');
 
     const shareUrl = url.toString();
     try {
@@ -244,53 +355,141 @@ export default function App() {
     window.setTimeout(() => setCopiedLink(false), 2200);
   };
 
-  // Editor handlers
-  const handleUpdateTitle = (projectTitle: string) => {
-    updateLocalData((prev) => ({ ...prev, projectTitle }));
+  const handleExportPdf = () => {
+    window.print();
   };
 
-  const handleUpdateDocument = (
-    id: string,
-    field: 'title' | 'url',
-    value: string
-  ) => {
-    updateLocalData((prev) => ({
+  // Multi-project handlers
+  const handleSelectProject = (id: string) => {
+    updateLocalStore((prev) => ({ ...prev, activeProjectId: id }));
+  };
+
+  const handleCreateProject = () => {
+    const newProject = createNewProjectTemplate(store.projects.length + 1);
+    updateLocalStore((prev) => ({
       ...prev,
-      documents: prev.documents.map((doc) =>
-        doc.id === id ? { ...doc, [field]: value } : doc
+      activeProjectId: newProject.id,
+      projects: [newProject, ...prev.projects],
+    }));
+  };
+
+  const handleToggleSortOrder = () => {
+    updateLocalStore((prev) => ({
+      ...prev,
+      sortOrder: prev.sortOrder === 'newest' ? 'oldest' : 'newest',
+    }));
+  };
+
+  const handleArchiveProject = (id: string) => {
+    updateLocalStore((prev) => {
+      const updatedProjects = prev.projects.map((p) =>
+        p.id === id ? { ...p, status: 'archived' as const } : p
+      );
+      const remainingActive = sortProjectsByDate(
+        updatedProjects.filter((p) => p.status === 'active'),
+        prev.sortOrder
+      );
+
+      if (remainingActive.length > 0) {
+        return {
+          ...prev,
+          activeProjectId: remainingActive[0].id,
+          projects: updatedProjects,
+        };
+      }
+
+      // Ensure there is always an active workspace project available
+      const freshActive = createNewProjectTemplate(updatedProjects.length + 1);
+      return {
+        ...prev,
+        activeProjectId: freshActive.id,
+        projects: [freshActive, ...updatedProjects],
+      };
+    });
+  };
+
+  const handleRestoreProject = (id: string) => {
+    updateLocalStore((prev) => ({
+      ...prev,
+      activeProjectId: id,
+      projects: prev.projects.map((p) =>
+        p.id === id ? { ...p, status: 'active' } : p
       ),
     }));
   };
 
+  const handleDeleteProject = (id: string) => {
+    updateLocalStore((prev) => {
+      const remaining = prev.projects.filter((p) => p.id !== id);
+      if (remaining.length === 0) {
+        const fresh = createNewProjectTemplate(1);
+        return {
+          ...prev,
+          activeProjectId: fresh.id,
+          projects: [fresh],
+        };
+      }
+      const nextActive =
+        prev.activeProjectId === id
+          ? (remaining.find((p) => p.status === 'active') || remaining[0]).id
+          : prev.activeProjectId;
+
+      return {
+        ...prev,
+        activeProjectId: nextActive,
+        projects: remaining,
+      };
+    });
+  };
+
+  // Selected project editor handlers
+  const handleUpdateTitle = (title: string) => {
+    updateSelectedProject((proj) => ({ ...proj, title }));
+  };
+
+  const handleUpdateProjectDate = (projectDate: string) => {
+    updateSelectedProject((proj) => ({ ...proj, projectDate }));
+  };
+
+  const handleUpdateDocument = (
+    key: 'kp' | 'plan',
+    patch: Partial<ProjectDocument>
+  ) => {
+    updateSelectedProject((proj) => ({
+      ...proj,
+      [key]: { ...proj[key], ...patch },
+    }));
+  };
+
   const handleAddStage = () => {
-    const nextIdx = data.stages.length + 1;
+    const nextIdx = selectedProject.stages.length;
     const newStage: ProjectStage = {
       id: `stage-${Date.now()}`,
-      name: `${nextIdx} этап (Новый этап)`,
+      name: `${nextIdx} этап`,
       amount: 15,
       paid: false,
       startDate: '2026-12-21',
       endDate: '2026-12-30',
     };
-    updateLocalData((prev) => ({
-      ...prev,
-      stages: [...prev.stages, newStage],
+    updateSelectedProject((proj) => ({
+      ...proj,
+      stages: [...proj.stages, newStage],
     }));
   };
 
   const handleUpdateStage = (id: string, patch: Partial<ProjectStage>) => {
-    updateLocalData((prev) => ({
-      ...prev,
-      stages: prev.stages.map((st) =>
+    updateSelectedProject((proj) => ({
+      ...proj,
+      stages: proj.stages.map((st) =>
         st.id === id ? { ...st, ...patch } : st
       ),
     }));
   };
 
   const handleDeleteStage = (id: string) => {
-    updateLocalData((prev) => ({
-      ...prev,
-      stages: prev.stages.filter((st) => st.id !== id),
+    updateSelectedProject((proj) => ({
+      ...proj,
+      stages: proj.stages.filter((st) => st.id !== id),
     }));
   };
 
@@ -301,25 +500,25 @@ export default function App() {
       totalCost: 10,
       paidAmount: 0,
     };
-    updateLocalData((prev) => ({
-      ...prev,
-      team: [...prev.team, newItem],
+    updateSelectedProject((proj) => ({
+      ...proj,
+      team: [...proj.team, newItem],
     }));
   };
 
   const handleUpdateTeamItem = (id: string, patch: Partial<TeamExpense>) => {
-    updateLocalData((prev) => ({
-      ...prev,
-      team: prev.team.map((item) =>
+    updateSelectedProject((proj) => ({
+      ...proj,
+      team: proj.team.map((item) =>
         item.id === id ? { ...item, ...patch } : item
       ),
     }));
   };
 
   const handleDeleteTeamItem = (id: string) => {
-    updateLocalData((prev) => ({
-      ...prev,
-      team: prev.team.filter((item) => item.id !== id),
+    updateSelectedProject((proj) => ({
+      ...proj,
+      team: proj.team.filter((item) => item.id !== id),
     }));
   };
 
@@ -335,7 +534,7 @@ export default function App() {
       setToken(nextToken);
 
       if (!nextGistId) {
-        const created = await createPrivateGist(dataRef.current, nextToken);
+        const created = await createPrivateGist(storeRef.current, nextToken);
         localStorage.setItem(GIST_ID_STORAGE_KEY, created.gistId);
         etagRef.current = created.etag;
         setGistId(created.gistId);
@@ -345,7 +544,7 @@ export default function App() {
         localStorage.setItem(GIST_ID_STORAGE_KEY, nextGistId);
         const updated = await updateGist(
           nextGistId,
-          dataRef.current,
+          storeRef.current,
           nextToken
         );
         etagRef.current = updated.etag;
@@ -374,7 +573,7 @@ export default function App() {
       const result = await fetchGistWithEtag(nextGistId, nextToken, null);
       if (result.data) {
         hasPendingLocalPushRef.current = false;
-        setData(result.data);
+        setStore(result.data);
       }
       etagRef.current = result.etag;
       setGistId(nextGistId);
@@ -394,34 +593,55 @@ export default function App() {
     setSyncError(null);
   };
 
-  const handleImportJson = (imported: DashboardData) => {
+  const handleImportJson = (imported: MultiProjectStore) => {
     hasPendingLocalPushRef.current = Boolean(gistId.trim() && token.trim());
-    setData(imported);
+    setStore(imported);
   };
 
   const handleResetDefault = () => {
     hasPendingLocalPushRef.current = Boolean(gistId.trim() && token.trim());
-    setData(structuredClone(DEFAULT_DASHBOARD_DATA));
+    setStore(structuredClone(DEFAULT_STORE));
   };
+
+  const showEditorControls = mode === 'editor' && !isLockedView;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF8F5] text-[#1F1D1A]">
       <Header
         mode={mode}
+        isLockedView={isLockedView}
         onToggleMode={handleToggleMode}
         syncState={syncState}
         hasGist={Boolean(gistId.trim())}
         syncError={syncError}
         copiedLink={copiedLink}
-        onCopyClientLink={handleCopyClientLink}
+        onCopyViewLink={handleCopyViewLink}
         onOpenSyncModal={() => setIsSyncModalOpen(true)}
+        onExportPdf={handleExportPdf}
       />
 
-      <main className="flex-1 max-w-[1280px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-10">
+      <main className="flex-1 max-w-[1280px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-8">
+        {showEditorControls && (
+          <ProjectWorkspaceBar
+            activeProjects={activeProjects}
+            selectedProject={selectedProject}
+            sortOrder={store.sortOrder}
+            onSelectProject={handleSelectProject}
+            onCreateProject={handleCreateProject}
+            onToggleSortOrder={handleToggleSortOrder}
+            onArchiveProject={handleArchiveProject}
+            onRestoreProject={handleRestoreProject}
+          />
+        )}
+
         <ProjectHeroSection
-          projectTitle={data.projectTitle}
-          currency={data.currency}
-          documents={data.documents}
+          projectId={selectedProject.id}
+          projectTitle={selectedProject.title}
+          projectDate={selectedProject.projectDate}
+          currency={selectedProject.currency}
+          kp={selectedProject.kp}
+          plan={selectedProject.plan}
+          gistId={gistId}
           mode={mode}
           totalBudget={metrics.totalBudget}
           paidBudget={metrics.paidBudget}
@@ -430,14 +650,18 @@ export default function App() {
           totalTeamCost={metrics.totalTeamCost}
           remainingTeamPay={metrics.remainingTeamPay}
           onUpdateTitle={handleUpdateTitle}
+          onUpdateProjectDate={handleUpdateProjectDate}
           onUpdateDocument={handleUpdateDocument}
         />
 
-        <GanttChart stages={data.stages} currency={data.currency} />
+        <GanttChart
+          stages={selectedProject.stages}
+          currency={selectedProject.currency}
+        />
 
         <StagesGrid
-          stages={data.stages}
-          currency={data.currency}
+          stages={selectedProject.stages}
+          currency={selectedProject.currency}
           mode={mode}
           onAddStage={handleAddStage}
           onUpdateStage={handleUpdateStage}
@@ -445,17 +669,17 @@ export default function App() {
         />
 
         <FinancialCharts
-          currency={data.currency}
+          currency={selectedProject.currency}
           totalBudget={metrics.totalBudget}
           paidBudget={metrics.paidBudget}
           totalTeamCost={metrics.totalTeamCost}
           paidTeamAmount={metrics.paidTeamAmount}
-          team={data.team}
+          team={selectedProject.team}
         />
 
         <TeamTable
-          team={data.team}
-          currency={data.currency}
+          team={selectedProject.team}
+          currency={selectedProject.currency}
           mode={mode}
           totalTeamCost={metrics.totalTeamCost}
           paidTeamAmount={metrics.paidTeamAmount}
@@ -464,6 +688,16 @@ export default function App() {
           onUpdateTeamItem={handleUpdateTeamItem}
           onDeleteTeamItem={handleDeleteTeamItem}
         />
+
+        {showEditorControls && (
+          <ArchiveSection
+            archivedProjects={archivedProjects}
+            selectedProjectId={selectedProject.id}
+            onOpenProject={handleSelectProject}
+            onRestoreProject={handleRestoreProject}
+            onDeleteProject={handleDeleteProject}
+          />
+        )}
       </main>
 
       <footer className="border-t border-[#E6DFD5] bg-[#FAF8F5] py-6">
@@ -487,10 +721,11 @@ export default function App() {
         onClose={() => setIsSyncModalOpen(false)}
         token={token}
         gistId={gistId}
+        activeProjectId={selectedProject.id}
         lastSyncedAt={lastSyncedAt}
         syncError={syncError}
         isBusy={isModalBusy}
-        data={data}
+        store={store}
         onSaveToken={setToken}
         onSaveConfigAndSync={handleSaveConfigAndSync}
         onPullFromGist={handlePullFromGist}

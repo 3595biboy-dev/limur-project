@@ -1,7 +1,7 @@
-export interface DocumentLink {
-  id: string;
-  title: string;
+export interface ProjectDocument {
   url: string;
+  fileName?: string;
+  fileDataUrl?: string;
 }
 
 export interface ProjectStage {
@@ -20,15 +20,31 @@ export interface TeamExpense {
   paidAmount: number;
 }
 
-export interface DashboardData {
-  projectTitle: string;
+export type ProjectStatus = 'active' | 'archived';
+
+export interface ProjectRecord {
+  id: string;
+  title: string;
+  createdAt: string;
+  projectDate: string; // YYYY-MM-DD
+  status: ProjectStatus;
   currency: string;
-  documents: DocumentLink[];
+  kp: ProjectDocument;
+  plan: ProjectDocument;
   stages: ProjectStage[];
   team: TeamExpense[];
   updatedAt?: string;
 }
 
-export type ViewMode = 'client' | 'editor';
+export type SortOrder = 'newest' | 'oldest';
+
+export interface MultiProjectStore {
+  activeProjectId: string;
+  sortOrder: SortOrder;
+  projects: ProjectRecord[];
+  updatedAt?: string;
+}
+
+export type ViewMode = 'view' | 'editor';
 
 export type SyncState = 'local' | 'online' | 'syncing' | 'error';
