@@ -5,6 +5,7 @@ import {
   ProjectRecord,
   ProjectStage,
   SortOrder,
+  StageExpense,
   TeamExpense,
   WorkStage,
 } from '../types/dashboard';
@@ -68,6 +69,107 @@ export function getStageDateBounds(stage: ProjectStage): {
   };
 }
 
+export function getStageExpensesBreakdown(
+  stage: ProjectStage,
+  team: TeamExpense[]
+): {
+  directTotal: number;
+  directPaid: number;
+  linkedTotal: number;
+  linkedPaid: number;
+  totalExpenses: number;
+  paidExpenses: number;
+} {
+  const direct = stage.expenses || [];
+  const directTotal = direct.reduce((sum, e) => sum + e.amount, 0);
+  const directPaid = direct
+    .filter((e) => e.paid)
+    .reduce((sum, e) => sum + e.amount, 0);
+
+  const linked = team.filter((t) => t.stageId === stage.id);
+  const linkedTotal = linked.reduce((sum, t) => sum + t.totalCost, 0);
+  const linkedPaid = linked.reduce((sum, t) => sum + t.paidAmount, 0);
+
+  return {
+    directTotal,
+    directPaid,
+    linkedTotal,
+    linkedPaid,
+    totalExpenses: directTotal + linkedTotal,
+    paidExpenses: directPaid + linkedPaid,
+  };
+}
+
+export function getProjectFinancialSummary(project: ProjectRecord): {
+  totalIncome: number;
+  paidIncome: number;
+  unpaidIncome: number;
+  projectExpensesTotal: number;
+  projectExpensesPaid: number;
+  salaryExpensesTotal: number;
+  salaryExpensesPaid: number;
+  totalExpenses: number;
+  totalPaidExpenses: number;
+  netMargin: number;
+} {
+  const totalIncome = project.stages.reduce((sum, s) => sum + s.amount, 0);
+  const paidIncome = project.stages
+    .filter((s) => s.paid)
+    .reduce((sum, s) => sum + s.amount, 0);
+  const unpaidIncome = Math.max(0, totalIncome - paidIncome);
+
+  const salaryItems = project.team.filter((t) => t.payoutType === 'salary');
+  const projectTeamItems = project.team.filter(
+    (t) => t.payoutType !== 'salary'
+  );
+
+  const salaryExpensesTotal = salaryItems.reduce(
+    (sum, t) => sum + t.totalCost,
+    0
+  );
+  const salaryExpensesPaid = salaryItems.reduce(
+    (sum, t) => sum + t.paidAmount,
+    0
+  );
+
+  const stageDirectTotal = project.stages.reduce(
+    (sum, s) => sum + (s.expenses || []).reduce((acc, e) => acc + e.amount, 0),
+    0
+  );
+  const stageDirectPaid = project.stages.reduce(
+    (sum, s) =>
+      sum +
+      (s.expenses || [])
+        .filter((e) => e.paid)
+        .reduce((acc, e) => acc + e.amount, 0),
+    0
+  );
+
+  const projectExpensesTotal =
+    projectTeamItems.reduce((sum, t) => sum + t.totalCost, 0) +
+    stageDirectTotal;
+  const projectExpensesPaid =
+    projectTeamItems.reduce((sum, t) => sum + t.paidAmount, 0) +
+    stageDirectPaid;
+
+  const totalExpenses = projectExpensesTotal + salaryExpensesTotal;
+  const totalPaidExpenses = projectExpensesPaid + salaryExpensesPaid;
+  const netMargin = totalIncome - totalExpenses;
+
+  return {
+    totalIncome,
+    paidIncome,
+    unpaidIncome,
+    projectExpensesTotal,
+    projectExpensesPaid,
+    salaryExpensesTotal,
+    salaryExpensesPaid,
+    totalExpenses,
+    totalPaidExpenses,
+    netMargin,
+  };
+}
+
 export function createDefaultProject(
   overrides?: Partial<ProjectRecord>
 ): ProjectRecord {
@@ -90,6 +192,7 @@ export function createDefaultProject(
         paid: true,
         startDate: '2026-11-01',
         endDate: '2026-11-18',
+        expenses: [],
         workStages: [
           {
             id: 'ws-1-1',
@@ -122,6 +225,7 @@ export function createDefaultProject(
         paid: true,
         startDate: '2026-11-19',
         endDate: '2026-12-05',
+        expenses: [],
         workStages: [
           {
             id: 'ws-2-1',
@@ -152,6 +256,7 @@ export function createDefaultProject(
         paid: false,
         startDate: '2026-12-06',
         endDate: '2026-12-20',
+        expenses: [],
         workStages: [
           {
             id: 'ws-3-1',
@@ -178,7 +283,8 @@ export function createDefaultProject(
       {
         id: 'team-1',
         role: 'Дизайнер',
-        payoutType: 'project',
+        payoutType: 'salary',
+        stageId: 'stage-1',
         totalCost: 25,
         paidAmount: 20,
       },
@@ -186,6 +292,7 @@ export function createDefaultProject(
         id: 'team-2',
         role: 'Визер',
         payoutType: 'project',
+        stageId: 'stage-2',
         totalCost: 20,
         paidAmount: 10,
       },
@@ -193,6 +300,7 @@ export function createDefaultProject(
         id: 'team-3',
         role: 'Чертёж',
         payoutType: 'project',
+        stageId: 'stage-3',
         totalCost: 25,
         paidAmount: 1.5,
       },
@@ -200,6 +308,7 @@ export function createDefaultProject(
         id: 'team-4',
         role: 'Замеры',
         payoutType: 'project',
+        stageId: 'stage-1',
         totalCost: 5,
         paidAmount: 5,
       },
@@ -207,6 +316,7 @@ export function createDefaultProject(
         id: 'team-5',
         role: 'Бенз и печать',
         payoutType: 'project',
+        stageId: 'stage-3',
         totalCost: 5,
         paidAmount: 2.5,
       },
@@ -220,6 +330,9 @@ export function createNewProjectTemplate(index: number): ProjectRecord {
   const startMs = Date.now();
   const fmt = (offsetDays: number) =>
     new Date(startMs + offsetDays * 86400000).toISOString().slice(0, 10);
+  const st1 = `st-${Date.now()}-1`;
+  const st2 = `st-${Date.now()}-2`;
+  const st3 = `st-${Date.now()}-3`;
 
   return {
     id: `proj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -233,12 +346,13 @@ export function createNewProjectTemplate(index: number): ProjectRecord {
     plan: { url: 'https://limurproject.ru/' },
     stages: [
       {
-        id: `st-${Date.now()}-1`,
+        id: st1,
         name: '1 этап оплаты (Замеры и планировка)',
         amount: 30,
         paid: false,
         startDate: fmt(0),
         endDate: fmt(17),
+        expenses: [],
         workStages: [
           {
             id: `ws-${Date.now()}-1-1`,
@@ -261,12 +375,13 @@ export function createNewProjectTemplate(index: number): ProjectRecord {
         ],
       },
       {
-        id: `st-${Date.now()}-2`,
+        id: st2,
         name: '2 этап оплаты (3D-визуализация)',
         amount: 50,
         paid: false,
         startDate: fmt(18),
         endDate: fmt(34),
+        expenses: [],
         workStages: [
           {
             id: `ws-${Date.now()}-2-1`,
@@ -280,12 +395,13 @@ export function createNewProjectTemplate(index: number): ProjectRecord {
         ],
       },
       {
-        id: `st-${Date.now()}-3`,
+        id: st3,
         name: '3 этап оплаты (Рабочие чертежи)',
         amount: 20,
         paid: false,
         startDate: fmt(35),
         endDate: fmt(49),
+        expenses: [],
         workStages: [
           {
             id: `ws-${Date.now()}-3-1`,
@@ -303,7 +419,8 @@ export function createNewProjectTemplate(index: number): ProjectRecord {
       {
         id: `tm-${Date.now()}-1`,
         role: 'Дизайнер',
-        payoutType: 'project',
+        payoutType: 'salary',
+        stageId: st1,
         totalCost: 25,
         paidAmount: 0,
       },
@@ -311,6 +428,7 @@ export function createNewProjectTemplate(index: number): ProjectRecord {
         id: `tm-${Date.now()}-2`,
         role: 'Визер',
         payoutType: 'project',
+        stageId: st2,
         totalCost: 20,
         paidAmount: 0,
       },
@@ -318,6 +436,7 @@ export function createNewProjectTemplate(index: number): ProjectRecord {
         id: `tm-${Date.now()}-3`,
         role: 'Чертёж',
         payoutType: 'project',
+        stageId: st3,
         totalCost: 25,
         paidAmount: 0,
       },
@@ -325,6 +444,7 @@ export function createNewProjectTemplate(index: number): ProjectRecord {
         id: `tm-${Date.now()}-4`,
         role: 'Замеры',
         payoutType: 'project',
+        stageId: st1,
         totalCost: 5,
         paidAmount: 0,
       },
@@ -332,6 +452,7 @@ export function createNewProjectTemplate(index: number): ProjectRecord {
         id: `tm-${Date.now()}-5`,
         role: 'Бенз и печать',
         payoutType: 'project',
+        stageId: st3,
         totalCost: 5,
         paidAmount: 0,
       },
@@ -366,7 +487,25 @@ function sanitizeDocument(
   };
 }
 
-function sanitizeWorkStages(rawWorkStages: unknown, stagePaid: boolean): WorkStage[] {
+function sanitizeStageExpenses(rawExpenses: unknown): StageExpense[] {
+  if (!Array.isArray(rawExpenses)) return [];
+  return rawExpenses.map((ex, idx) => {
+    const e = (ex || {}) as Partial<StageExpense>;
+    return {
+      id: typeof e.id === 'string' && e.id ? e.id : `se-${idx + 1}`,
+      title: typeof e.title === 'string' ? e.title : `Расход ${idx + 1}`,
+      amount: Number.isFinite(Number(e.amount))
+        ? Math.max(0, Number(e.amount))
+        : 0,
+      paid: Boolean(e.paid),
+    };
+  });
+}
+
+function sanitizeWorkStages(
+  rawWorkStages: unknown,
+  stagePaid: boolean
+): WorkStage[] {
   if (!Array.isArray(rawWorkStages)) return [];
   return rawWorkStages.map((ws, idx) => {
     const w = (ws || {}) as Partial<WorkStage>;
@@ -405,7 +544,6 @@ function sanitizeStages(rawStages: unknown): ProjectStage[] {
   return rawStages.map((st, idx) => {
     const s = (st || {}) as Partial<ProjectStage>;
     const paid = Boolean(s.paid);
-    const workStages = sanitizeWorkStages(s.workStages, paid);
     return {
       id: typeof s.id === 'string' && s.id ? s.id : `stage-${idx + 1}`,
       name: typeof s.name === 'string' ? s.name : `Этап ${idx + 1}`,
@@ -423,7 +561,8 @@ function sanitizeStages(rawStages: unknown): ProjectStage[] {
         ? Math.min(100, Math.max(0, Number(s.progress)))
         : undefined,
       clientApproval: Boolean(s.clientApproval),
-      workStages,
+      workStages: sanitizeWorkStages(s.workStages, paid),
+      expenses: sanitizeStageExpenses(s.expenses),
     };
   });
 }
@@ -438,6 +577,8 @@ function sanitizeTeam(rawTeam: unknown): TeamExpense[] {
       id: typeof m.id === 'string' && m.id ? m.id : `team-${idx + 1}`,
       role: typeof m.role === 'string' ? m.role : `Статья ${idx + 1}`,
       payoutType,
+      stageId:
+        typeof m.stageId === 'string' && m.stageId ? m.stageId : undefined,
       totalCost: Number.isFinite(Number(m.totalCost))
         ? Math.max(0, Number(m.totalCost))
         : 0,

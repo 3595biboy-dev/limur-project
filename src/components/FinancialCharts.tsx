@@ -1,13 +1,16 @@
 import React, { useMemo, useState } from 'react';
-import { TeamExpense } from '../types/dashboard';
-import { formatNumber } from '../data/defaultData';
+import { ProjectStage, TeamExpense } from '../types/dashboard';
+import { formatNumber, getStageExpensesBreakdown } from '../data/defaultData';
 
 interface FinancialChartsProps {
   currency: string;
   totalBudget: number;
   paidBudget: number;
-  totalTeamCost: number;
-  paidTeamAmount: number;
+  projectExpensesTotal: number;
+  projectExpensesPaid: number;
+  salaryExpensesTotal: number;
+  salaryExpensesPaid: number;
+  stages: ProjectStage[];
   team: TeamExpense[];
 }
 
@@ -25,21 +28,119 @@ export const FinancialCharts: React.FC<FinancialChartsProps> = ({
   currency,
   totalBudget,
   paidBudget,
-  totalTeamCost,
-  paidTeamAmount,
+  projectExpensesTotal,
+  projectExpensesPaid,
+  salaryExpensesTotal,
+  salaryExpensesPaid,
+  stages,
   team,
 }) => {
+  const [hoveredOverallIdx, setHoveredOverallIdx] = useState<number | null>(null);
+  const [hoveredStageIdx, setHoveredStageIdx] = useState<number | null>(null);
   const [hoveredRoleIdx, setHoveredRoleIdx] = useState<number | null>(null);
-  const [hoveredBar, setHoveredBar] = useState<'income' | 'expense' | null>(null);
-  const [hoveredCompId, setHoveredCompId] = useState<string | null>(null);
 
-  const incomePercent = totalBudget > 0 ? Math.min(100, (paidBudget / totalBudget) * 100) : 0;
-  const expensePercent = totalTeamCost > 0 ? Math.min(100, (paidTeamAmount / totalTeamCost) * 100) : 0;
-  const projectMargin = totalBudget - totalTeamCost;
-  const unpaidBudget = Math.max(0, totalBudget - paidBudget);
-  const remainingTeamPay = Math.max(0, totalTeamCost - paidTeamAmount);
+  const totalAllExpenses = projectExpensesTotal + salaryExpensesTotal;
+  const totalTeamCost = team.reduce((sum, m) => sum + m.totalCost, 0);
+  const netMargin = totalBudget - totalAllExpenses;
+  const isNegativeMargin = netMargin < 0;
 
-  // SVG Donut segments
+  // 1. Single Overall Project Chart Data
+  const overallMetrics = useMemo(() => {
+    const maxVal = Math.max(
+      1,
+      totalBudget,
+      projectExpensesTotal,
+      salaryExpensesTotal,
+      Math.abs(netMargin)
+    );
+
+    return {
+      maxVal,
+      rows: [
+        {
+          id: 'income',
+          label: 'Доход проекта',
+          total: totalBudget,
+          paid: paidBudget,
+          subLabel: `Получено: ${formatNumber(paidBudget)} ${currency}`,
+          color: '#4E735D',
+          trackColor: '#EEF3F0',
+        },
+        {
+          id: 'project-exp',
+          label: 'Расходы (этапы и подряд)',
+          total: projectExpensesTotal,
+          paid: projectExpensesPaid,
+          subLabel: `Оплачено: ${formatNumber(projectExpensesPaid)} ${currency}`,
+          color: '#B8956A',
+          trackColor: '#F3EFE9',
+        },
+        {
+          id: 'salary-exp',
+          label: 'Выплаты на ЗП (Оклад)',
+          total: salaryExpensesTotal,
+          paid: salaryExpensesPaid,
+          subLabel: `Выплачено: ${formatNumber(salaryExpensesPaid)} ${currency}`,
+          color: '#1F1D1A',
+          trackColor: '#ECE9E4',
+        },
+        {
+          id: 'margin',
+          label: 'Чистая маржа проекта',
+          total: Math.abs(netMargin),
+          rawMargin: netMargin,
+          paid: Math.abs(netMargin),
+          subLabel:
+            netMargin >= 0
+              ? `Рентабельность: ${
+                  totalBudget > 0
+                    ? ((netMargin / totalBudget) * 100).toFixed(1)
+                    : '0.0'
+                }%`
+              : 'Дефицит бюджета',
+          color: isNegativeMargin ? '#C46D5E' : '#4E735D',
+          trackColor: isNegativeMargin ? '#FAF0EE' : '#EEF3F0',
+        },
+      ],
+    };
+  }, [
+    totalBudget,
+    paidBudget,
+    projectExpensesTotal,
+    projectExpensesPaid,
+    salaryExpensesTotal,
+    salaryExpensesPaid,
+    netMargin,
+    isNegativeMargin,
+    currency,
+  ]);
+
+  // 2. Per-Stage Income vs Expense Chart Data
+  const stageBars = useMemo(() => {
+    const items = stages.map((st) => {
+      const exp = getStageExpensesBreakdown(st, team);
+      const surplus = st.amount - exp.totalExpenses;
+      return {
+        id: st.id,
+        name: st.name,
+        income: st.amount,
+        paidIncome: st.paid ? st.amount : 0,
+        expenses: exp.totalExpenses,
+        paidExpenses: exp.paidExpenses,
+        surplus,
+        paid: st.paid,
+      };
+    });
+
+    const maxStageVal = Math.max(
+      1,
+      ...items.map((i) => Math.max(i.income, i.expenses))
+    );
+
+    return { items, maxStageVal };
+  }, [stages, team]);
+
+  // 3. Team Donut Data
   const donutSegments = useMemo(() => {
     const radius = 56;
     const circumference = 2 * Math.PI * radius;
@@ -63,342 +164,350 @@ export const FinancialCharts: React.FC<FinancialChartsProps> = ({
     });
   }, [team, totalTeamCost]);
 
-  // Grouped comparison bars (Total Share % vs Remaining Unpaid Share % relative to totalTeamCost)
-  const comparisonRows = useMemo(() => {
-    const rows = team.map((item) => {
-      const remaining = Math.max(0, item.totalCost - item.paidAmount);
-      const totalSharePct = totalTeamCost > 0 ? (item.totalCost / totalTeamCost) * 100 : 0;
-      const remainingSharePct = totalTeamCost > 0 ? (remaining / totalTeamCost) * 100 : 0;
-      return {
-        id: item.id,
-        role: item.role,
-        totalCost: item.totalCost,
-        paidAmount: item.paidAmount,
-        totalSharePct,
-        remainingSharePct,
-        remaining,
-      };
-    });
-
-    const maxPct = Math.max(
-      35,
-      ...rows.map((r) => Math.max(r.totalSharePct, r.remainingSharePct))
-    );
-
-    return { rows, maxPct };
-  }, [team, totalTeamCost]);
-
   const activeDonutItem =
     hoveredRoleIdx !== null ? donutSegments[hoveredRoleIdx] : null;
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-5">
       <div>
         <h2 className="font-serif-display text-2xl font-bold text-[#1F1D1A]">
           Финансовая аналитика
         </h2>
         <p className="text-xs text-[#7A736A] mt-0.5">
-          Баланс поступлений, структура расходов команды и доля остатков
+          Общая экономика проекта, баланс доходов и расходов по этапам и структура команды
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* Chart 1: Доходы и расходы */}
-        <div className="bg-white border border-[#E6DFD5] rounded-xl p-6 flex flex-col justify-between gap-6">
-          <div>
-            <h3 className="text-base font-semibold text-[#1F1D1A]">
-              Доходы и расходы
-            </h3>
-            <p className="text-xs text-[#7A736A] mt-0.5">
-              Фактические оплаты к плановому бюджету
-            </p>
-          </div>
-
-          <div className="space-y-6">
-            {/* Income Bar */}
-            <div
-              className="relative space-y-2"
-              onMouseEnter={() => setHoveredBar('income')}
-              onMouseLeave={() => setHoveredBar(null)}
-            >
-              {hoveredBar === 'income' && (
-                <div className="absolute -top-10 right-0 z-20 bg-[#1F1D1A] text-[#FAF8F5] text-[11px] px-3 py-1.5 rounded-lg shadow-md whitespace-nowrap pointer-events-none tabular-nums">
-                  Оплачено: {formatNumber(paidBudget)} {currency} · Остаток:{' '}
-                  {formatNumber(unpaidBudget)} {currency} ({incomePercent.toFixed(1)}%)
-                </div>
-              )}
-              <div className="flex items-baseline justify-between text-xs gap-2">
-                <span className="font-medium text-[#1F1D1A]">
-                  Поступления по этапам
-                </span>
-                <span className="font-semibold text-[#4E735D] tabular-nums whitespace-nowrap">
-                  {formatNumber(paidBudget)} / {formatNumber(totalBudget)} {currency}
-                </span>
-              </div>
-              <div className="h-3.5 w-full bg-[#F3EFE9] rounded-md overflow-hidden cursor-default">
-                <div
-                  className="h-full bg-[#4E735D] rounded-md transition-all duration-300"
-                  style={{ width: `${incomePercent}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-[11px] text-[#7A736A] tabular-nums">
-                <span>Исполнение бюджета</span>
-                <span>{incomePercent.toFixed(1)}%</span>
-              </div>
+      {/* Top Row: Single Overall Project Chart + Per-Stage Income vs Expense Chart */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* 1. Single Overall Project Chart */}
+        <div className="bg-white border border-[#E6DFD5] rounded-xl p-6 flex flex-col justify-between gap-5 print-break-avoid">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-[#1F1D1A]">
+                Общая экономика проекта
+              </h3>
+              <p className="text-xs text-[#7A736A] mt-0.5">
+                Доход, проектные расходы, выплаты на ЗП и чистая маржа
+              </p>
             </div>
-
-            {/* Expense Bar */}
-            <div
-              className="relative space-y-2"
-              onMouseEnter={() => setHoveredBar('expense')}
-              onMouseLeave={() => setHoveredBar(null)}
-            >
-              {hoveredBar === 'expense' && (
-                <div className="absolute -top-10 right-0 z-20 bg-[#1F1D1A] text-[#FAF8F5] text-[11px] px-3 py-1.5 rounded-lg shadow-md whitespace-nowrap pointer-events-none tabular-nums">
-                  Выплачено: {formatNumber(paidTeamAmount)} {currency} · Осталось:{' '}
-                  {formatNumber(remainingTeamPay)} {currency} ({expensePercent.toFixed(1)}%)
-                </div>
-              )}
-              <div className="flex items-baseline justify-between text-xs gap-2">
-                <span className="font-medium text-[#1F1D1A]">
-                  Выплаты команде
-                </span>
-                <span className="font-semibold text-[#B8956A] tabular-nums whitespace-nowrap">
-                  {formatNumber(paidTeamAmount)} / {formatNumber(totalTeamCost)} {currency}
-                </span>
-              </div>
-              <div className="h-3.5 w-full bg-[#F3EFE9] rounded-md overflow-hidden cursor-default">
-                <div
-                  className="h-full bg-[#B8956A] rounded-md transition-all duration-300"
-                  style={{ width: `${expensePercent}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-[11px] text-[#7A736A] tabular-nums">
-                <span>Оплачено подрядчикам</span>
-                <span>{expensePercent.toFixed(1)}%</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Margin Summary */}
-          <div className="pt-4 border-t border-[#E6DFD5] flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-[#6B655D]">
-              Расчётная маржа проекта:
-            </span>
             <div className="flex items-center gap-2 shrink-0">
-              {projectMargin < 0 && (
+              {isNegativeMargin && (
                 <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-[#FAF0EE] text-[#C46D5E] border border-[#C46D5E]/30">
                   МИНУС
                 </span>
               )}
               <span
                 className={`text-sm font-bold tabular-nums whitespace-nowrap ${
-                  projectMargin >= 0 ? 'text-[#4E735D]' : 'text-[#C46D5E]'
+                  isNegativeMargin ? 'text-[#C46D5E]' : 'text-[#4E735D]'
                 }`}
               >
-                {projectMargin > 0 ? '+' : ''}
-                {formatNumber(projectMargin)} {currency}
+                {netMargin > 0 ? '+' : ''}
+                {formatNumber(netMargin)} {currency}
               </span>
             </div>
           </div>
-        </div>
 
-        {/* Chart 2: Общие затраты (Custom SVG Donut) */}
-        <div className="bg-white border border-[#E6DFD5] rounded-xl p-6 flex flex-col justify-between gap-5">
-          <div>
-            <h3 className="text-base font-semibold text-[#1F1D1A]">
-              Общие затраты
-            </h3>
-            <p className="text-xs text-[#7A736A] mt-0.5">
-              Доля каждой статьи в расходах команды
-            </p>
-          </div>
-
-          <div className="relative flex flex-col sm:flex-row lg:flex-col xl:flex-row items-center gap-5">
-            {activeDonutItem && (
-              <div className="absolute -top-10 left-0 right-0 sm:right-auto z-20 bg-[#1F1D1A] text-[#FAF8F5] text-[11px] px-3 py-1.5 rounded-lg shadow-md sm:whitespace-nowrap pointer-events-none tabular-nums">
-                <span className="font-semibold">{activeDonutItem.role}:</span>{' '}
-                {formatNumber(activeDonutItem.totalCost)} {currency} (
-                {activeDonutItem.sharePct.toFixed(2)}%) · Оплачено:{' '}
-                {formatNumber(activeDonutItem.paidAmount)} {currency}
-              </div>
-            )}
-
-            <div className="relative w-[156px] h-[156px] shrink-0">
-              <svg
-                viewBox="0 0 150 150"
-                className="w-full h-full -rotate-90"
-                role="img"
-                aria-label="Диаграмма распределения общих затрат"
-              >
-                <circle
-                  cx="75"
-                  cy="75"
-                  r="56"
-                  fill="none"
-                  stroke="#F3EFE9"
-                  strokeWidth="22"
-                />
-                {donutSegments.map((seg, idx) => (
-                  <circle
-                    key={seg.id}
-                    cx="75"
-                    cy="75"
-                    r={seg.radius}
-                    fill="none"
-                    stroke={seg.color}
-                    strokeWidth={hoveredRoleIdx === idx ? '25' : '22'}
-                    strokeDasharray={seg.dashArray}
-                    strokeDashoffset={seg.dashOffset}
-                    className="transition-all duration-200 cursor-pointer"
-                    onMouseEnter={() => setHoveredRoleIdx(idx)}
-                    onMouseLeave={() => setHoveredRoleIdx(null)}
-                  />
-                ))}
-              </svg>
-
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none px-4">
-                {activeDonutItem ? (
-                  <>
-                    <span className="text-[11px] font-medium text-[#7A736A] truncate max-w-[90px]">
-                      {activeDonutItem.role}
-                    </span>
-                    <span className="text-base font-bold text-[#1F1D1A] tabular-nums">
-                      {formatNumber(activeDonutItem.totalCost)} {currency}
-                    </span>
-                    <span className="text-[10px] font-semibold text-[#B8956A] tabular-nums">
-                      {activeDonutItem.sharePct.toFixed(2)}%
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-[11px] text-[#7A736A]">Всего</span>
-                    <span className="text-base font-bold text-[#1F1D1A] tabular-nums">
-                      {formatNumber(totalTeamCost)}
-                    </span>
-                    <span className="text-[10px] text-[#7A736A]">{currency}</span>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Legend */}
-            <div className="w-full space-y-2 min-w-0">
-              {donutSegments.map((seg, idx) => (
-                <div
-                  key={seg.id}
-                  onMouseEnter={() => setHoveredRoleIdx(idx)}
-                  onMouseLeave={() => setHoveredRoleIdx(null)}
-                  className={`flex items-center justify-between gap-2 text-xs px-2 py-1 rounded transition-colors cursor-default ${
-                    hoveredRoleIdx === idx ? 'bg-[#FAF8F5]' : ''
-                  }`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span
-                      className="w-2.5 h-2.5 rounded-xs shrink-0"
-                      style={{ backgroundColor: seg.color }}
-                    />
-                    <span className="text-[#1F1D1A] truncate">{seg.role}</span>
-                  </div>
-                  <span className="font-semibold text-[#4A453E] tabular-nums shrink-0">
-                    {formatNumber(seg.totalCost)} {currency} · {seg.sharePct.toFixed(2)}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Chart 3: Затраты vs Осталось */}
-        <div className="bg-white border border-[#E6DFD5] rounded-xl p-6 flex flex-col justify-between gap-5">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <h3 className="text-base font-semibold text-[#1F1D1A]">
-                Затраты vs Осталось
-              </h3>
-              <p className="text-xs text-[#7A736A] mt-0.5">
-                Доля статьи и остаток от общего бюджета команды
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-3.5">
-            {comparisonRows.rows.map((row) => {
-              const totalWidth = Math.min(
+          <div className="space-y-4">
+            {overallMetrics.rows.map((row, idx) => {
+              const totalPct = Math.min(
                 100,
-                (row.totalSharePct / comparisonRows.maxPct) * 100
+                (row.total / overallMetrics.maxVal) * 100
               );
-              const remainWidth = Math.min(
+              const paidPct = Math.min(
                 100,
-                (row.remainingSharePct / comparisonRows.maxPct) * 100
+                (row.paid / overallMetrics.maxVal) * 100
               );
-              const isRowHovered = hoveredCompId === row.id;
+              const isMarginRow = row.id === 'margin';
+              const displayValue = isMarginRow
+                ? `${netMargin > 0 ? '+' : ''}${formatNumber(netMargin)}`
+                : formatNumber(row.total);
 
               return (
                 <div
                   key={row.id}
-                  onMouseEnter={() => setHoveredCompId(row.id)}
-                  onMouseLeave={() => setHoveredCompId(null)}
-                  className="relative space-y-1 rounded-md transition-colors"
+                  onMouseEnter={() => setHoveredOverallIdx(idx)}
+                  onMouseLeave={() => setHoveredOverallIdx(null)}
+                  className="relative space-y-1.5"
                 >
-                  {isRowHovered && (
-                    <div className="absolute -top-10 left-0 sm:left-auto right-0 z-20 bg-[#1F1D1A] text-[#FAF8F5] text-[11px] px-3 py-1.5 rounded-lg shadow-md sm:whitespace-nowrap pointer-events-none tabular-nums">
-                      Затраты: {formatNumber(row.totalCost)} {currency} · Оплачено:{' '}
-                      {formatNumber(row.paidAmount)} {currency} · Остаток:{' '}
-                      {formatNumber(row.remaining)} {currency}
+                  {hoveredOverallIdx === idx && (
+                    <div className="absolute -top-9 right-0 z-20 bg-[#1F1D1A] text-[#FAF8F5] text-[11px] px-3 py-1.5 rounded-lg shadow-md whitespace-nowrap pointer-events-none tabular-nums">
+                      {row.label}: {displayValue} {currency} · {row.subLabel}
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="font-medium text-[#1F1D1A] truncate">
-                      {row.role}
+                  <div className="flex items-baseline justify-between gap-2 text-xs">
+                    <span className="font-medium text-[#1F1D1A]">
+                      {row.label}
                     </span>
-                    <div className="flex items-center gap-2 tabular-nums shrink-0 text-[11px]">
-                      <span className="text-[#8C6D46] font-medium">
-                        {row.totalSharePct.toFixed(2)}%
+                    <div className="flex items-center gap-2 tabular-nums">
+                      <span className="text-[11px] text-[#7A736A] hidden sm:inline">
+                        {row.subLabel}
                       </span>
-                      <span className="text-[#D4CBC0]">/</span>
                       <span
-                        className={`font-semibold ${
-                          row.remainingSharePct > 0
-                            ? 'text-[#C46D5E]'
-                            : 'text-[#4E735D]'
-                        }`}
+                        className="font-bold"
+                        style={{ color: row.color }}
                       >
-                        {row.remainingSharePct.toFixed(2)}%
+                        {displayValue} {currency}
                       </span>
                     </div>
                   </div>
 
-                  {/* Two grouped bars */}
-                  <div className="space-y-1 cursor-default">
-                    <div className="h-2 w-full bg-[#F3EFE9] rounded-sm overflow-hidden">
-                      <div
-                        className="h-full bg-[#B8956A] rounded-sm transition-all duration-300"
-                        style={{ width: `${totalWidth}%` }}
-                      />
-                    </div>
-                    <div className="h-2 w-full bg-[#F3EFE9] rounded-sm overflow-hidden">
-                      <div
-                        className="h-full bg-[#C46D5E] rounded-sm transition-all duration-300"
-                        style={{ width: `${remainWidth}%` }}
-                      />
-                    </div>
+                  {/* Custom CSS/SVG Dual-Layer Bar */}
+                  <div
+                    className="relative h-3.5 w-full rounded-md overflow-hidden cursor-default"
+                    style={{ backgroundColor: row.trackColor }}
+                  >
+                    {/* Planned / Total span */}
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-md opacity-30 transition-all duration-300"
+                      style={{
+                        width: `${totalPct}%`,
+                        backgroundColor: row.color,
+                      }}
+                    />
+                    {/* Paid / Realized span */}
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-md transition-all duration-300"
+                      style={{
+                        width: `${isMarginRow ? totalPct : paidPct}%`,
+                        backgroundColor: row.color,
+                      }}
+                    />
                   </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="pt-3 border-t border-[#E6DFD5] flex items-center gap-5 text-[11px] text-[#6B655D]">
+          <div className="pt-3 border-t border-[#E6DFD5] flex flex-wrap items-center justify-between gap-3 text-[11px] text-[#6B655D] tabular-nums">
+            <span>
+              Всего расходов: {formatNumber(totalAllExpenses)} {currency}
+            </span>
+            <span>
+              Проектные: {formatNumber(projectExpensesTotal)} {currency} · ЗП:{' '}
+              {formatNumber(salaryExpensesTotal)} {currency}
+            </span>
+          </div>
+        </div>
+
+        {/* 2. Per-Stage Income vs Expense Chart */}
+        <div className="bg-white border border-[#E6DFD5] rounded-xl p-6 flex flex-col justify-between gap-5 print-break-avoid">
+          <div>
+            <h3 className="text-base font-semibold text-[#1F1D1A]">
+              Доходы и расходы по этапам
+            </h3>
+            <p className="text-xs text-[#7A736A] mt-0.5">
+              Сопоставление бюджета этапа, связанных расходов и сальдо (профицит / дефицит)
+            </p>
+          </div>
+
+          {stageBars.items.length === 0 ? (
+            <div className="py-8 text-center text-xs text-[#7A736A]">
+              Добавьте этапы для отображения разбивки доходов и расходов.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {stageBars.items.map((item, idx) => {
+                const incomeW = Math.min(
+                  100,
+                  (item.income / stageBars.maxStageVal) * 100
+                );
+                const expenseW = Math.min(
+                  100,
+                  (item.expenses / stageBars.maxStageVal) * 100
+                );
+                const isSurplus = item.surplus >= 0;
+
+                return (
+                  <div
+                    key={item.id}
+                    onMouseEnter={() => setHoveredStageIdx(idx)}
+                    onMouseLeave={() => setHoveredStageIdx(null)}
+                    className="relative space-y-1.5"
+                  >
+                    {hoveredStageIdx === idx && (
+                      <div className="absolute -top-9 right-0 z-20 bg-[#1F1D1A] text-[#FAF8F5] text-[11px] px-3 py-1.5 rounded-lg shadow-md whitespace-nowrap pointer-events-none tabular-nums">
+                        Доход: {formatNumber(item.income)} {currency} · Расходы:{' '}
+                        {formatNumber(item.expenses)} {currency} · Сальдо:{' '}
+                        {item.surplus > 0 ? '+' : ''}
+                        {formatNumber(item.surplus)} {currency}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-medium text-[#1F1D1A] truncate">
+                        {item.name}
+                      </span>
+                      <div className="flex items-center gap-2 tabular-nums shrink-0 text-[11px]">
+                        <span className="text-[#4E735D] font-semibold">
+                          +{formatNumber(item.income)}
+                        </span>
+                        <span className="text-[#D4CBC0]">/</span>
+                        <span className="text-[#8C6D46] font-semibold">
+                          −{formatNumber(item.expenses)}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded font-bold ${
+                            item.surplus > 0
+                              ? 'bg-[#EEF3F0] text-[#4E735D]'
+                              : item.surplus < 0
+                                ? 'bg-[#FAF0EE] text-[#C46D5E]'
+                                : 'bg-[#F3EFE9] text-[#6B655D]'
+                          }`}
+                        >
+                          {isSurplus && item.surplus > 0 ? '+' : ''}
+                          {formatNumber(item.surplus)} {currency}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1 cursor-default">
+                      <div className="h-2 w-full bg-[#F3EFE9] rounded-sm overflow-hidden">
+                        <div
+                          className="h-full bg-[#4E735D] rounded-sm transition-all duration-300"
+                          style={{ width: `${incomeW}%` }}
+                        />
+                      </div>
+                      <div className="h-2 w-full bg-[#F3EFE9] rounded-sm overflow-hidden">
+                        <div
+                          className="h-full rounded-sm transition-all duration-300"
+                          style={{
+                            width: `${expenseW}%`,
+                            backgroundColor:
+                              item.surplus < 0 ? '#C46D5E' : '#B8956A',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-[#E6DFD5] flex flex-wrap items-center gap-5 text-[11px] text-[#6B655D]">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-xs bg-[#4E735D]" />
+              <span>Доход этапа</span>
+            </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-xs bg-[#B8956A]" />
-              <span>Доля затрат (%)</span>
+              <span>Расходы этапа</span>
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-xs bg-[#C46D5E]" />
-              <span>Осталось (%)</span>
+              <span>Дефицит по этапу</span>
             </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom Row: Team Cost Distribution SVG Donut */}
+      <div className="bg-white border border-[#E6DFD5] rounded-xl p-6 print-break-avoid">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-5">
+          <div>
+            <h3 className="text-base font-semibold text-[#1F1D1A]">
+              Структура затрат команды
+            </h3>
+            <p className="text-xs text-[#7A736A] mt-0.5">
+              Доля каждой роли и статьи в расходах команды ({currency})
+            </p>
+          </div>
+        </div>
+
+        <div className="relative flex flex-col md:flex-row items-center gap-8">
+          {activeDonutItem && (
+            <div className="absolute -top-9 left-0 z-20 bg-[#1F1D1A] text-[#FAF8F5] text-[11px] px-3 py-1.5 rounded-lg shadow-md whitespace-nowrap pointer-events-none tabular-nums">
+              <span className="font-semibold">{activeDonutItem.role}:</span>{' '}
+              {formatNumber(activeDonutItem.totalCost)} {currency} (
+              {activeDonutItem.sharePct.toFixed(2)}%) · Оплачено:{' '}
+              {formatNumber(activeDonutItem.paidAmount)} {currency}
+            </div>
+          )}
+
+          <div className="relative w-[164px] h-[164px] shrink-0">
+            <svg
+              viewBox="0 0 150 150"
+              className="w-full h-full -rotate-90"
+              role="img"
+              aria-label="Диаграмма распределения общих затрат"
+            >
+              <circle
+                cx="75"
+                cy="75"
+                r="56"
+                fill="none"
+                stroke="#F3EFE9"
+                strokeWidth="22"
+              />
+              {donutSegments.map((seg, idx) => (
+                <circle
+                  key={seg.id}
+                  cx="75"
+                  cy="75"
+                  r={seg.radius}
+                  fill="none"
+                  stroke={seg.color}
+                  strokeWidth={hoveredRoleIdx === idx ? '25' : '22'}
+                  strokeDasharray={seg.dashArray}
+                  strokeDashoffset={seg.dashOffset}
+                  className="transition-all duration-200 cursor-pointer"
+                  onMouseEnter={() => setHoveredRoleIdx(idx)}
+                  onMouseLeave={() => setHoveredRoleIdx(null)}
+                />
+              ))}
+            </svg>
+
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none px-4">
+              {activeDonutItem ? (
+                <>
+                  <span className="text-[11px] font-medium text-[#7A736A] truncate max-w-[90px]">
+                    {activeDonutItem.role}
+                  </span>
+                  <span className="text-base font-bold text-[#1F1D1A] tabular-nums">
+                    {formatNumber(activeDonutItem.totalCost)} {currency}
+                  </span>
+                  <span className="text-[10px] font-semibold text-[#B8956A] tabular-nums">
+                    {activeDonutItem.sharePct.toFixed(2)}%
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="text-[11px] text-[#7A736A]">Всего</span>
+                  <span className="text-base font-bold text-[#1F1D1A] tabular-nums">
+                    {formatNumber(totalTeamCost)}
+                  </span>
+                  <span className="text-[10px] text-[#7A736A]">{currency}</span>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 min-w-0">
+            {donutSegments.map((seg, idx) => (
+              <div
+                key={seg.id}
+                onMouseEnter={() => setHoveredRoleIdx(idx)}
+                onMouseLeave={() => setHoveredRoleIdx(null)}
+                className={`flex items-center justify-between gap-2 text-xs px-3 py-2 rounded-lg border border-[#E6DFD5]/70 transition-colors cursor-default ${
+                  hoveredRoleIdx === idx ? 'bg-[#FAF8F5] border-[#B8956A]' : 'bg-white'
+                }`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="w-2.5 h-2.5 rounded-xs shrink-0"
+                    style={{ backgroundColor: seg.color }}
+                  />
+                  <span className="text-[#1F1D1A] truncate font-medium">
+                    {seg.role}
+                  </span>
+                </div>
+                <span className="font-semibold text-[#4A453E] tabular-nums shrink-0">
+                  {formatNumber(seg.totalCost)} {currency} · {seg.sharePct.toFixed(2)}%
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       </div>

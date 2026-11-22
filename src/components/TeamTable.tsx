@@ -1,10 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react';
-import { PayoutType, TeamExpense, ViewMode } from '../types/dashboard';
+import {
+  PayoutType,
+  ProjectStage,
+  TeamExpense,
+  ViewMode,
+} from '../types/dashboard';
 import { formatNumber } from '../data/defaultData';
 
 interface TeamTableProps {
   team: TeamExpense[];
+  stages: ProjectStage[];
   currency: string;
   areaM2: number;
   mode: ViewMode;
@@ -19,6 +25,7 @@ interface TeamTableProps {
 
 export const TeamTable: React.FC<TeamTableProps> = ({
   team,
+  stages,
   currency,
   areaM2,
   mode,
@@ -33,7 +40,6 @@ export const TeamTable: React.FC<TeamTableProps> = ({
   const isEditor = mode === 'editor';
   const [clientExpanded, setClientExpanded] = useState(false);
 
-  // Reset accordion to closed whenever switching to View Mode
   useEffect(() => {
     if (!isEditor) {
       setClientExpanded(false);
@@ -51,12 +57,11 @@ export const TeamTable: React.FC<TeamTableProps> = ({
             Команда проекта: оплаты и остаток
           </h2>
           <p className="text-xs text-[#7A736A] mt-0.5">
-            Детализация выплат по ролям, типу оплаты и ставке за м² ({currency})
+            Детализация выплат по ролям, типу выплаты (По объекту / Оклад), привязке к этапу и ставке за м² ({currency})
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 shrink-0">
-          {/* Area in m² */}
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#E6DFD5] bg-[#FAF8F5] text-xs">
             <span className="text-[#6B655D]">Площадь:</span>
             {isEditor ? (
@@ -112,11 +117,12 @@ export const TeamTable: React.FC<TeamTableProps> = ({
 
       {showTable && (
         <div className="border-t border-[#E6DFD5] overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[780px]">
+          <table className="w-full text-left border-collapse min-w-[880px]">
             <thead>
               <tr className="bg-[#FAF8F5] border-b border-[#E6DFD5] text-[11px] font-semibold uppercase tracking-wider text-[#7A736A]">
                 <th className="py-3 px-6">Команда / Статья</th>
                 <th className="py-3 px-3">Тип выплаты</th>
+                <th className="py-3 px-3">Этап оплаты</th>
                 <th className="py-3 px-4 text-right">Общие затраты</th>
                 <th className="py-3 px-4 text-right">Ставка / м²</th>
                 <th className="py-3 px-4 text-right">Оплачено</th>
@@ -130,7 +136,7 @@ export const TeamTable: React.FC<TeamTableProps> = ({
               {team.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={isEditor ? 8 : 7}
+                    colSpan={isEditor ? 9 : 8}
                     className="py-8 text-center text-sm text-[#7A736A]"
                   >
                     Статьи расходов не добавлены.
@@ -149,6 +155,8 @@ export const TeamTable: React.FC<TeamTableProps> = ({
                   const perM2 = (item.totalCost * 1000) / safeArea;
                   const payoutType: PayoutType =
                     item.payoutType === 'salary' ? 'salary' : 'project';
+                  const linkedStageName =
+                    stages.find((s) => s.id === item.stageId)?.name || 'Общий';
 
                   return (
                     <tr
@@ -166,7 +174,7 @@ export const TeamTable: React.FC<TeamTableProps> = ({
                               })
                             }
                             aria-label="Название роли или статьи"
-                            className="w-full max-w-[210px] text-sm font-medium text-[#1F1D1A] bg-[#FAF8F5] border border-[#E6DFD5] focus:border-[#B8956A] focus:outline-none rounded-md px-2.5 py-1.5"
+                            className="w-full max-w-[190px] text-sm font-medium text-[#1F1D1A] bg-[#FAF8F5] border border-[#E6DFD5] focus:border-[#B8956A] focus:outline-none rounded-md px-2.5 py-1.5"
                           />
                         ) : (
                           item.role
@@ -186,11 +194,39 @@ export const TeamTable: React.FC<TeamTableProps> = ({
                             className="text-xs font-medium text-[#4A453E] bg-[#FAF8F5] border border-[#E6DFD5] focus:border-[#B8956A] focus:outline-none rounded-md px-2 py-1.5 cursor-pointer"
                           >
                             <option value="project">По объекту</option>
-                            <option value="salary">Оклад</option>
+                            <option value="salary">Оклад (ЗП)</option>
                           </select>
                         ) : (
                           <span className="text-[#6B655D]">
-                            {payoutType === 'salary' ? 'Оклад' : 'По объекту'}
+                            {payoutType === 'salary'
+                              ? 'Оклад (ЗП)'
+                              : 'По объекту'}
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="py-3 px-3 text-xs">
+                        {isEditor ? (
+                          <select
+                            value={item.stageId || ''}
+                            onChange={(e) =>
+                              onUpdateTeamItem(item.id, {
+                                stageId: e.target.value || undefined,
+                              })
+                            }
+                            aria-label={`Этап оплаты: ${item.role}`}
+                            className="max-w-[170px] text-xs text-[#4A453E] bg-[#FAF8F5] border border-[#E6DFD5] focus:border-[#B8956A] focus:outline-none rounded-md px-2 py-1.5 cursor-pointer"
+                          >
+                            <option value="">Без привязки</option>
+                            {stages.map((st) => (
+                              <option key={st.id} value={st.id}>
+                                {st.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-[#6B655D] truncate block max-w-[160px]">
+                            {linkedStageName}
                           </span>
                         )}
                       </td>
@@ -211,7 +247,7 @@ export const TeamTable: React.FC<TeamTableProps> = ({
                               })
                             }
                             aria-label={`Общие затраты: ${item.role}`}
-                            className="w-24 text-right text-sm font-medium text-[#1F1D1A] tabular-nums bg-[#FAF8F5] border border-[#E6DFD5] focus:border-[#B8956A] focus:outline-none rounded-md px-2.5 py-1.5"
+                            className="w-22 text-right text-sm font-medium text-[#1F1D1A] tabular-nums bg-[#FAF8F5] border border-[#E6DFD5] focus:border-[#B8956A] focus:outline-none rounded-md px-2 py-1.5"
                           />
                         ) : (
                           <span>
@@ -243,7 +279,7 @@ export const TeamTable: React.FC<TeamTableProps> = ({
                               })
                             }
                             aria-label={`Оплачено: ${item.role}`}
-                            className="w-24 text-right text-sm font-medium text-[#4E735D] tabular-nums bg-[#FAF8F5] border border-[#E6DFD5] focus:border-[#B8956A] focus:outline-none rounded-md px-2.5 py-1.5"
+                            className="w-22 text-right text-sm font-medium text-[#4E735D] tabular-nums bg-[#FAF8F5] border border-[#E6DFD5] focus:border-[#B8956A] focus:outline-none rounded-md px-2 py-1.5"
                           />
                         ) : (
                           <span>
@@ -291,7 +327,7 @@ export const TeamTable: React.FC<TeamTableProps> = ({
             {team.length > 0 && (
               <tfoot>
                 <tr className="bg-[#FAF8F5] border-t border-[#E6DFD5] text-sm font-bold text-[#1F1D1A]">
-                  <td className="py-3.5 px-6" colSpan={2}>
+                  <td className="py-3.5 px-6" colSpan={3}>
                     Итого по команде
                   </td>
                   <td className="py-3.5 px-4 text-right tabular-nums">
@@ -301,9 +337,9 @@ export const TeamTable: React.FC<TeamTableProps> = ({
                     </span>
                   </td>
                   <td className="py-3.5 px-4 text-right tabular-nums text-xs font-semibold text-[#6B655D]">
-                    {Math.round((totalTeamCost * 1000) / safeArea).toLocaleString(
-                      'ru-RU'
-                    )}{' '}
+                    {Math.round(
+                      (totalTeamCost * 1000) / safeArea
+                    ).toLocaleString('ru-RU')}{' '}
                     ₽/м²
                   </td>
                   <td className="py-3.5 px-4 text-right tabular-nums text-[#4E735D]">

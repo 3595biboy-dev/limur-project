@@ -4,6 +4,13 @@ export interface ProjectDocument {
   fileDataUrl?: string;
 }
 
+export interface StageExpense {
+  id: string;
+  title: string;
+  amount: number;
+  paid: boolean;
+}
+
 export interface WorkStage {
   id: string;
   title: string;
@@ -26,6 +33,7 @@ export interface ProjectStage {
   progress?: number; // 0-100 fallback when workStages is empty
   clientApproval?: boolean;
   workStages: WorkStage[];
+  expenses: StageExpense[];
 }
 
 export type PayoutType = 'project' | 'salary';
@@ -34,6 +42,7 @@ export interface TeamExpense {
   id: string;
   role: string;
   payoutType?: PayoutType;
+  stageId?: string;
   totalCost: number;
   paidAmount: number;
 }
@@ -65,5 +74,7 @@ export interface MultiProjectStore {
 }
 
 export type ViewMode = 'view' | 'editor';
+
+export type WorkspaceTab = 'project' | 'dashboard';
 
 export type SyncState = 'local' | 'online' | 'syncing' | 'error';

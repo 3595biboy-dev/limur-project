@@ -4,11 +4,13 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FolderKanban, LayoutDashboard } from 'lucide-react';
 import {
   DEFAULT_STORE,
   GIST_ID_STORAGE_KEY,
   TOKEN_STORAGE_KEY,
   createNewProjectTemplate,
+  getProjectFinancialSummary,
   loadStoreFromStorage,
   saveStoreToStorage,
 } from './data/defaultData';
@@ -22,10 +24,12 @@ import {
   ProjectDocument,
   ProjectRecord,
   ProjectStage,
+  StageExpense,
   SyncState,
   TeamExpense,
   ViewMode,
   WorkStage,
+  WorkspaceTab,
 } from './types/dashboard';
 import { Header } from './components/Header';
 import { ProjectWorkspaceBar } from './components/ProjectWorkspaceBar';
@@ -36,6 +40,7 @@ import { FinancialCharts } from './components/FinancialCharts';
 import { TeamTable } from './components/TeamTable';
 import { ArchiveSection } from './components/ArchiveSection';
 import { SyncModal } from './components/SyncModal';
+import { GlobalDashboard, getOverdueItems } from './components/GlobalDashboard';
 
 function getInitialUrlParams(): {
   mode: ViewMode;
@@ -82,6 +87,7 @@ export default function App() {
   const initialParams = useMemo(() => getInitialUrlParams(), []);
 
   const [mode, setMode] = useState<ViewMode>(initialParams.mode);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('project');
   const isLockedView = initialParams.isLockedView;
 
   const [store, setStore] = useState<MultiProjectStore>(() => {
@@ -291,16 +297,11 @@ export default function App() {
 
   // Derived Financial KPIs for selected project
   const metrics = useMemo(() => {
-    const totalBudget = selectedProject.stages.reduce(
-      (sum, s) => sum + s.amount,
-      0
-    );
-    const paidBudget = selectedProject.stages
-      .filter((s) => s.paid)
-      .reduce((sum, s) => sum + s.amount, 0);
-    const unpaidBudget = Math.max(0, totalBudget - paidBudget);
+    const fin = getProjectFinancialSummary(selectedProject);
     const closedPercent =
-      totalBudget > 0 ? Math.round((paidBudget / totalBudget) * 100) : 0;
+      fin.totalIncome > 0
+        ? Math.round((fin.paidIncome / fin.totalIncome) * 100)
+        : 0;
 
     const totalTeamCost = selectedProject.team.reduce(
       (sum, m) => sum + m.totalCost,
@@ -313,20 +314,35 @@ export default function App() {
     const remainingTeamPay = Math.max(0, totalTeamCost - paidTeamAmount);
 
     return {
-      totalBudget,
-      paidBudget,
-      unpaidBudget,
+      totalBudget: fin.totalIncome,
+      paidBudget: fin.paidIncome,
+      unpaidBudget: fin.unpaidIncome,
       closedPercent,
+      projectExpensesTotal: fin.projectExpensesTotal,
+      projectExpensesPaid: fin.projectExpensesPaid,
+      salaryExpensesTotal: fin.salaryExpensesTotal,
+      salaryExpensesPaid: fin.salaryExpensesPaid,
       totalTeamCost,
       paidTeamAmount,
       remainingTeamPay,
     };
-  }, [selectedProject.stages, selectedProject.team]);
+  }, [selectedProject]);
+
+  const overdueCount = useMemo(
+    () => getOverdueItems(store.projects).length,
+    [store.projects]
+  );
 
   // Mode toggle handler
   const handleToggleMode = () => {
     if (isLockedView) return;
-    setMode((prev) => (prev === 'view' ? 'editor' : 'view'));
+    setMode((prev) => {
+      const next = prev === 'view' ? 'editor' : 'view';
+      if (next === 'view') {
+        setActiveTab('project');
+      }
+      return next;
+    });
   };
 
   // Copy shareable link (?mode=view&project=<ID>&gist=<GIST_ID>)
@@ -471,6 +487,7 @@ export default function App() {
       paid: false,
       startDate: '2026-12-21',
       endDate: '2026-12-30',
+      expenses: [],
       workStages: [
         {
           id: `ws-${Date.now()}-1`,
@@ -554,6 +571,58 @@ export default function App() {
         return {
           ...st,
           workStages: st.workStages.filter((ws) => ws.id !== workId),
+        };
+      }),
+    }));
+  };
+
+  const handleAddStageExpense = (stageId: string) => {
+    updateSelectedProject((proj) => ({
+      ...proj,
+      stages: proj.stages.map((st) => {
+        if (st.id !== stageId) return st;
+        const currentExpenses = st.expenses || [];
+        const newExpense: StageExpense = {
+          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+          title: `Расход ${currentExpenses.length + 1}`,
+          amount: 5,
+          paid: false,
+        };
+        return {
+          ...st,
+          expenses: [...currentExpenses, newExpense],
+        };
+      }),
+    }));
+  };
+
+  const handleUpdateStageExpense = (
+    stageId: string,
+    expenseId: string,
+    patch: Partial<StageExpense>
+  ) => {
+    updateSelectedProject((proj) => ({
+      ...proj,
+      stages: proj.stages.map((st) => {
+        if (st.id !== stageId) return st;
+        return {
+          ...st,
+          expenses: (st.expenses || []).map((ex) =>
+            ex.id === expenseId ? { ...ex, ...patch } : ex
+          ),
+        };
+      }),
+    }));
+  };
+
+  const handleDeleteStageExpense = (stageId: string, expenseId: string) => {
+    updateSelectedProject((proj) => ({
+      ...proj,
+      stages: proj.stages.map((st) => {
+        if (st.id !== stageId) return st;
+        return {
+          ...st,
+          expenses: (st.expenses || []).filter((ex) => ex.id !== expenseId),
         };
       }),
     }));
@@ -675,6 +744,12 @@ export default function App() {
   };
 
   const showEditorControls = mode === 'editor' && !isLockedView;
+  const effectiveTab: WorkspaceTab = showEditorControls ? activeTab : 'project';
+
+  const handleJumpToProjectFromDashboard = (projectId: string) => {
+    handleSelectProject(projectId);
+    setActiveTab('project');
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF8F5] text-[#1F1D1A]">
@@ -693,86 +768,166 @@ export default function App() {
 
       <main className="flex-1 max-w-[1280px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-8">
         {showEditorControls && (
-          <ProjectWorkspaceBar
-            activeProjects={activeProjects}
-            selectedProject={selectedProject}
-            sortOrder={store.sortOrder}
-            onSelectProject={handleSelectProject}
-            onCreateProject={handleCreateProject}
-            onToggleSortOrder={handleToggleSortOrder}
-            onArchiveProject={handleArchiveProject}
-            onRestoreProject={handleRestoreProject}
-          />
+          <div className="no-print flex flex-wrap items-center justify-between gap-3">
+            <div
+              role="tablist"
+              aria-label="Разделы студии"
+              className="inline-flex items-center p-1 rounded-xl border border-[#E6DFD5] bg-white"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={effectiveTab === 'project'}
+                onClick={() => setActiveTab('project')}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                  effectiveTab === 'project'
+                    ? 'bg-[#1F1D1A] text-[#FAF8F5]'
+                    : 'text-[#6B655D] hover:text-[#1F1D1A]'
+                }`}
+              >
+                <FolderKanban
+                  className={`w-3.5 h-3.5 ${
+                    effectiveTab === 'project' ? 'text-[#B8956A]' : 'text-[#7A736A]'
+                  }`}
+                />
+                <span>Проект</span>
+              </button>
+
+              <button
+                type="button"
+                role="tab"
+                aria-selected={effectiveTab === 'dashboard'}
+                onClick={() => setActiveTab('dashboard')}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                  effectiveTab === 'dashboard'
+                    ? 'bg-[#1F1D1A] text-[#FAF8F5]'
+                    : 'text-[#6B655D] hover:text-[#1F1D1A]'
+                }`}
+              >
+                <LayoutDashboard
+                  className={`w-3.5 h-3.5 ${
+                    effectiveTab === 'dashboard' ? 'text-[#B8956A]' : 'text-[#7A736A]'
+                  }`}
+                />
+                <span>Дашборд</span>
+                {overdueCount > 0 && (
+                  <span
+                    className={`inline-flex items-center justify-center min-w-[18px] h-4.5 px-1 rounded-full text-[10px] font-bold tabular-nums ${
+                      effectiveTab === 'dashboard'
+                        ? 'bg-[#C46D5E] text-white'
+                        : 'bg-[#FAF0EE] text-[#C46D5E]'
+                    }`}
+                  >
+                    {overdueCount}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            <span className="text-xs text-[#7A736A] tabular-nums">
+              Всего проектов: {store.projects.length}
+            </span>
+          </div>
         )}
 
-        <ProjectHeroSection
-          projectId={selectedProject.id}
-          projectTitle={selectedProject.title}
-          projectDate={selectedProject.projectDate}
-          currency={selectedProject.currency}
-          kp={selectedProject.kp}
-          plan={selectedProject.plan}
-          gistId={gistId}
-          mode={mode}
-          totalBudget={metrics.totalBudget}
-          paidBudget={metrics.paidBudget}
-          unpaidBudget={metrics.unpaidBudget}
-          closedPercent={metrics.closedPercent}
-          totalTeamCost={metrics.totalTeamCost}
-          remainingTeamPay={metrics.remainingTeamPay}
-          onUpdateTitle={handleUpdateTitle}
-          onUpdateProjectDate={handleUpdateProjectDate}
-          onUpdateDocument={handleUpdateDocument}
-        />
-
-        <GanttChart
-          stages={selectedProject.stages}
-          currency={selectedProject.currency}
-        />
-
-        <StagesGrid
-          stages={selectedProject.stages}
-          currency={selectedProject.currency}
-          mode={mode}
-          onAddStage={handleAddStage}
-          onUpdateStage={handleUpdateStage}
-          onDeleteStage={handleDeleteStage}
-          onAddWorkStage={handleAddWorkStage}
-          onUpdateWorkStage={handleUpdateWorkStage}
-          onDeleteWorkStage={handleDeleteWorkStage}
-        />
-
-        <FinancialCharts
-          currency={selectedProject.currency}
-          totalBudget={metrics.totalBudget}
-          paidBudget={metrics.paidBudget}
-          totalTeamCost={metrics.totalTeamCost}
-          paidTeamAmount={metrics.paidTeamAmount}
-          team={selectedProject.team}
-        />
-
-        <TeamTable
-          team={selectedProject.team}
-          currency={selectedProject.currency}
-          areaM2={selectedProject.areaM2 ?? 85}
-          mode={mode}
-          totalTeamCost={metrics.totalTeamCost}
-          paidTeamAmount={metrics.paidTeamAmount}
-          remainingTeamPay={metrics.remainingTeamPay}
-          onUpdateAreaM2={handleUpdateAreaM2}
-          onAddTeamItem={handleAddTeamItem}
-          onUpdateTeamItem={handleUpdateTeamItem}
-          onDeleteTeamItem={handleDeleteTeamItem}
-        />
-
-        {showEditorControls && (
-          <ArchiveSection
-            archivedProjects={archivedProjects}
-            selectedProjectId={selectedProject.id}
-            onOpenProject={handleSelectProject}
-            onRestoreProject={handleRestoreProject}
-            onDeleteProject={handleDeleteProject}
+        {effectiveTab === 'dashboard' ? (
+          <GlobalDashboard
+            projects={store.projects}
+            onJumpToProject={handleJumpToProjectFromDashboard}
           />
+        ) : (
+          <>
+            {showEditorControls && (
+              <ProjectWorkspaceBar
+                activeProjects={activeProjects}
+                selectedProject={selectedProject}
+                sortOrder={store.sortOrder}
+                onSelectProject={handleSelectProject}
+                onCreateProject={handleCreateProject}
+                onToggleSortOrder={handleToggleSortOrder}
+                onArchiveProject={handleArchiveProject}
+                onRestoreProject={handleRestoreProject}
+              />
+            )}
+
+            <ProjectHeroSection
+              projectId={selectedProject.id}
+              projectTitle={selectedProject.title}
+              projectDate={selectedProject.projectDate}
+              currency={selectedProject.currency}
+              kp={selectedProject.kp}
+              plan={selectedProject.plan}
+              gistId={gistId}
+              mode={mode}
+              totalBudget={metrics.totalBudget}
+              paidBudget={metrics.paidBudget}
+              unpaidBudget={metrics.unpaidBudget}
+              closedPercent={metrics.closedPercent}
+              totalTeamCost={metrics.totalTeamCost}
+              remainingTeamPay={metrics.remainingTeamPay}
+              onUpdateTitle={handleUpdateTitle}
+              onUpdateProjectDate={handleUpdateProjectDate}
+              onUpdateDocument={handleUpdateDocument}
+            />
+
+            <GanttChart
+              stages={selectedProject.stages}
+              currency={selectedProject.currency}
+            />
+
+            <StagesGrid
+              stages={selectedProject.stages}
+              team={selectedProject.team}
+              currency={selectedProject.currency}
+              mode={mode}
+              onAddStage={handleAddStage}
+              onUpdateStage={handleUpdateStage}
+              onDeleteStage={handleDeleteStage}
+              onAddWorkStage={handleAddWorkStage}
+              onUpdateWorkStage={handleUpdateWorkStage}
+              onDeleteWorkStage={handleDeleteWorkStage}
+              onAddStageExpense={handleAddStageExpense}
+              onUpdateStageExpense={handleUpdateStageExpense}
+              onDeleteStageExpense={handleDeleteStageExpense}
+            />
+
+            <FinancialCharts
+              currency={selectedProject.currency}
+              totalBudget={metrics.totalBudget}
+              paidBudget={metrics.paidBudget}
+              projectExpensesTotal={metrics.projectExpensesTotal}
+              projectExpensesPaid={metrics.projectExpensesPaid}
+              salaryExpensesTotal={metrics.salaryExpensesTotal}
+              salaryExpensesPaid={metrics.salaryExpensesPaid}
+              stages={selectedProject.stages}
+              team={selectedProject.team}
+            />
+
+            <TeamTable
+              team={selectedProject.team}
+              stages={selectedProject.stages}
+              currency={selectedProject.currency}
+              areaM2={selectedProject.areaM2 ?? 85}
+              mode={mode}
+              totalTeamCost={metrics.totalTeamCost}
+              paidTeamAmount={metrics.paidTeamAmount}
+              remainingTeamPay={metrics.remainingTeamPay}
+              onUpdateAreaM2={handleUpdateAreaM2}
+              onAddTeamItem={handleAddTeamItem}
+              onUpdateTeamItem={handleUpdateTeamItem}
+              onDeleteTeamItem={handleDeleteTeamItem}
+            />
+
+            {showEditorControls && (
+              <ArchiveSection
+                archivedProjects={archivedProjects}
+                selectedProjectId={selectedProject.id}
+                onOpenProject={handleSelectProject}
+                onRestoreProject={handleRestoreProject}
+                onDeleteProject={handleDeleteProject}
+              />
+            )}
+          </>
         )}
       </main>
 

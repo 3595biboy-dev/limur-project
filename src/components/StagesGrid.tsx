@@ -5,20 +5,29 @@ import {
   ChevronDown,
   ChevronUp,
   Plus,
+  Receipt,
   Trash2,
   UserCheck,
   X,
 } from 'lucide-react';
-import { ProjectStage, ViewMode, WorkStage } from '../types/dashboard';
+import {
+  ProjectStage,
+  StageExpense,
+  TeamExpense,
+  ViewMode,
+  WorkStage,
+} from '../types/dashboard';
 import {
   formatNumber,
   formatShortDate,
   getStageCompletionPercent,
   getStageDateBounds,
+  getStageExpensesBreakdown,
 } from '../data/defaultData';
 
 interface StagesGridProps {
   stages: ProjectStage[];
+  team: TeamExpense[];
   currency: string;
   mode: ViewMode;
   onAddStage: () => void;
@@ -31,10 +40,18 @@ interface StagesGridProps {
     patch: Partial<WorkStage>
   ) => void;
   onDeleteWorkStage: (stageId: string, workId: string) => void;
+  onAddStageExpense: (stageId: string) => void;
+  onUpdateStageExpense: (
+    stageId: string,
+    expenseId: string,
+    patch: Partial<StageExpense>
+  ) => void;
+  onDeleteStageExpense: (stageId: string, expenseId: string) => void;
 }
 
 export const StagesGrid: React.FC<StagesGridProps> = ({
   stages,
+  team,
   currency,
   mode,
   onAddStage,
@@ -43,14 +60,24 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
   onAddWorkStage,
   onUpdateWorkStage,
   onDeleteWorkStage,
+  onAddStageExpense,
+  onUpdateStageExpense,
+  onDeleteStageExpense,
 }) => {
   const isEditor = mode === 'editor';
-  const [expandedStageIds, setExpandedStageIds] = useState<Record<string, boolean>>(
-    {}
-  );
+  const [expandedStageIds, setExpandedStageIds] = useState<
+    Record<string, boolean>
+  >({});
+  const [expandedExpenseIds, setExpandedExpenseIds] = useState<
+    Record<string, boolean>
+  >({});
 
   const toggleExpanded = (id: string) => {
     setExpandedStageIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const toggleExpenses = (id: string) => {
+    setExpandedExpenseIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   return (
@@ -61,7 +88,7 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
             Этапы оплаты и работ
           </h2>
           <p className="text-xs text-[#7A736A] mt-0.5">
-            Этапы оплаты по КП и вложенные рабочие задачи с авторасчётом готовности
+            Поступления, расходы по каждому этапу и вложенные рабочие задачи с авторасчётом готовности
           </p>
         </div>
 
@@ -88,9 +115,15 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
             const bounds = getStageDateBounds(stage);
             const workCount = stage.workStages?.length || 0;
             const isExpanded = Boolean(expandedStageIds[stage.id]);
+            const isExpExpanded = Boolean(expandedExpenseIds[stage.id]);
             const hasApprovalTask = stage.workStages?.some(
               (w) => w.clientApproval
             );
+
+            const expBreakdown = getStageExpensesBreakdown(stage, team);
+            const stageBalance = stage.amount - expBreakdown.totalExpenses;
+            const linkedTeam = team.filter((t) => t.stageId === stage.id);
+            const directExpenses = stage.expenses || [];
 
             return (
               <div
@@ -128,7 +161,7 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
                     )}
                   </div>
 
-                  {/* Payment Status + Amount */}
+                  {/* Payment Status + Income Amount */}
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     {isEditor ? (
                       <button
@@ -194,14 +227,36 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {/* Per-Stage Expenses & Balance Summary (Editor Only) */}
+                  {isEditor && (
+                    <div className="no-print flex items-center justify-between gap-2 text-[11px] bg-[#FAF8F5] border border-[#E6DFD5]/80 rounded-lg px-3 py-2 tabular-nums">
+                      <span className="text-[#6B655D]">
+                        Расходы:{' '}
+                        <strong className="text-[#1F1D1A] font-semibold">
+                          {formatNumber(expBreakdown.totalExpenses)} {currency}
+                        </strong>
+                      </span>
+                      <span
+                        className={`font-semibold ${
+                          stageBalance > 0
+                            ? 'text-[#4E735D]'
+                            : stageBalance < 0
+                              ? 'text-[#C46D5E]'
+                              : 'text-[#6B655D]'
+                        }`}
+                      >
+                        Баланс: {stageBalance > 0 ? '+' : ''}
+                        {formatNumber(stageBalance)} {currency}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Auto-calculated completion % + Date bounds */}
                 <div className="pt-3 border-t border-[#E6DFD5]/80 space-y-2.5">
                   <div className="flex items-center justify-between text-xs gap-2">
-                    <span className="text-[#6B655D]">
-                      Готовность работ
-                    </span>
+                    <span className="text-[#6B655D]">Готовность работ</span>
                     <span
                       className={`font-semibold tabular-nums ${
                         completionPct === 100
@@ -269,7 +324,6 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
                             key={ws.id}
                             className="bg-[#FAF8F5] border border-[#E6DFD5] rounded-lg p-3 space-y-2"
                           >
-                            {/* Work title & delete */}
                             <div className="flex items-start justify-between gap-2">
                               {isEditor ? (
                                 <input
@@ -303,7 +357,6 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
                               )}
                             </div>
 
-                            {/* Assignee + Approval flag */}
                             <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                               {isEditor ? (
                                 <input
@@ -354,7 +407,6 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
                               )}
                             </div>
 
-                            {/* Dates: Planned & Actual */}
                             {isEditor ? (
                               <div className="space-y-1.5 pt-1">
                                 <div className="grid grid-cols-2 gap-1.5">
@@ -393,7 +445,8 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
                                       value={ws.actualStart || ''}
                                       onChange={(e) =>
                                         onUpdateWorkStage(stage.id, ws.id, {
-                                          actualStart: e.target.value || undefined,
+                                          actualStart:
+                                            e.target.value || undefined,
                                         })
                                       }
                                       className="mt-0.5 w-full text-[11px] text-[#1F1D1A] tabular-nums bg-white border border-[#E6DFD5] rounded px-1.5 py-0.5"
@@ -406,7 +459,8 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
                                       value={ws.actualEnd || ''}
                                       onChange={(e) =>
                                         onUpdateWorkStage(stage.id, ws.id, {
-                                          actualEnd: e.target.value || undefined,
+                                          actualEnd:
+                                            e.target.value || undefined,
                                         })
                                       }
                                       className="mt-0.5 w-full text-[11px] text-[#1F1D1A] tabular-nums bg-white border border-[#E6DFD5] rounded px-1.5 py-0.5"
@@ -435,7 +489,6 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
                               </div>
                             )}
 
-                            {/* Progress % */}
                             <div className="pt-1 space-y-1">
                               <div className="flex items-center justify-between gap-2 text-[11px]">
                                 <span className="text-[#7A736A]">Прогресс</span>
@@ -495,6 +548,147 @@ export const StagesGrid: React.FC<StagesGridProps> = ({
                     </div>
                   )}
                 </div>
+
+                {/* Expandable Stage-Linked Expenses Section (Editor Only) */}
+                {isEditor && (
+                  <div className="no-print pt-2 border-t border-[#E6DFD5]/80">
+                    <button
+                      type="button"
+                      onClick={() => toggleExpenses(stage.id)}
+                      aria-expanded={isExpExpanded}
+                      className="w-full flex items-center justify-between gap-2 py-1.5 text-xs font-medium text-[#1F1D1A] hover:text-[#B8956A] transition-colors cursor-pointer"
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <Receipt className="w-3.5 h-3.5 text-[#B8956A]" />
+                        <span>
+                          Расходы этапа ·{' '}
+                          {formatNumber(expBreakdown.totalExpenses)} {currency}
+                        </span>
+                      </span>
+                      {isExpExpanded ? (
+                        <ChevronUp className="w-4 h-4 text-[#7A736A]" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-[#7A736A]" />
+                      )}
+                    </button>
+
+                    {isExpExpanded && (
+                      <div className="mt-2.5 space-y-2">
+                        {linkedTeam.length > 0 && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#7A736A]">
+                              Из таблицы команды:
+                            </span>
+                            {linkedTeam.map((t) => (
+                              <div
+                                key={t.id}
+                                className="flex items-center justify-between text-xs bg-[#FAF8F5] border border-[#E6DFD5]/80 rounded px-2.5 py-1.5 tabular-nums"
+                              >
+                                <span className="text-[#1F1D1A] truncate">
+                                  {t.role}{' '}
+                                  <span className="text-[10px] text-[#7A736A]">
+                                    (
+                                    {t.payoutType === 'salary'
+                                      ? 'ЗП'
+                                      : 'По объекту'}
+                                    )
+                                  </span>
+                                </span>
+                                <span className="font-semibold text-[#1F1D1A] shrink-0">
+                                  {formatNumber(t.totalCost)} {currency}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {directExpenses.length > 0 && (
+                          <div className="space-y-1.5">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#7A736A]">
+                              Прямые расходы этапа:
+                            </span>
+                            {directExpenses.map((ex) => (
+                              <div
+                                key={ex.id}
+                                className="bg-[#FAF8F5] border border-[#E6DFD5] rounded p-2 space-y-1.5"
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    value={ex.title}
+                                    onChange={(e) =>
+                                      onUpdateStageExpense(stage.id, ex.id, {
+                                        title: e.target.value,
+                                      })
+                                    }
+                                    aria-label="Название расхода этапа"
+                                    className="flex-1 min-w-0 text-xs text-[#1F1D1A] bg-white border border-[#E6DFD5] rounded px-2 py-1"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      onDeleteStageExpense(stage.id, ex.id)
+                                    }
+                                    aria-label={`Удалить расход ${ex.title}`}
+                                    className="p-1 text-[#7A736A] hover:text-[#C46D5E] cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      onUpdateStageExpense(stage.id, ex.id, {
+                                        paid: !ex.paid,
+                                      })
+                                    }
+                                    className={`px-2 py-0.5 rounded text-[11px] font-medium cursor-pointer ${
+                                      ex.paid
+                                        ? 'bg-[#EEF3F0] text-[#4E735D]'
+                                        : 'bg-[#FAF0EE] text-[#C46D5E]'
+                                    }`}
+                                  >
+                                    {ex.paid ? 'Оплачено' : 'К оплате'}
+                                  </button>
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="0.5"
+                                      value={ex.amount}
+                                      onChange={(e) =>
+                                        onUpdateStageExpense(stage.id, ex.id, {
+                                          amount: Math.max(
+                                            0,
+                                            Number(e.target.value) || 0
+                                          ),
+                                        })
+                                      }
+                                      className="w-16 text-right text-xs font-semibold tabular-nums bg-white border border-[#E6DFD5] rounded px-1.5 py-0.5"
+                                    />
+                                    <span className="text-[11px] text-[#7A736A]">
+                                      {currency}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => onAddStageExpense(stage.id)}
+                          className="w-full inline-flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium rounded-lg border border-dashed border-[#D4CBC0] text-[#4A453E] hover:border-[#B8956A] hover:text-[#1F1D1A] transition-colors cursor-pointer"
+                        >
+                          <Plus className="w-3 h-3 text-[#B8956A]" />
+                          <span>Добавить расход этапа</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
