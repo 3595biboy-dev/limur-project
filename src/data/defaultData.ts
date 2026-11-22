@@ -1,10 +1,12 @@
 import {
   MultiProjectStore,
+  PayoutType,
   ProjectDocument,
   ProjectRecord,
   ProjectStage,
   SortOrder,
   TeamExpense,
+  WorkStage,
 } from '../types/dashboard';
 
 export const STORAGE_KEY = 'limur_multiproject_v1';
@@ -26,6 +28,46 @@ const OLD_DEFAULT_TITLES = new Set([
   'новый проект',
 ]);
 
+export function getStageCompletionPercent(stage: ProjectStage): number {
+  if (stage.workStages && stage.workStages.length > 0) {
+    const sum = stage.workStages.reduce(
+      (acc, ws) => acc + Math.min(100, Math.max(0, Number(ws.progress) || 0)),
+      0
+    );
+    return Math.round(sum / stage.workStages.length);
+  }
+  if (typeof stage.progress === 'number' && Number.isFinite(stage.progress)) {
+    return Math.min(100, Math.max(0, Math.round(stage.progress)));
+  }
+  return stage.paid ? 100 : 0;
+}
+
+export function getStageDateBounds(stage: ProjectStage): {
+  startDate: string;
+  endDate: string;
+} {
+  if (stage.workStages && stage.workStages.length > 0) {
+    const starts = stage.workStages
+      .map((w) => w.plannedStart)
+      .filter(Boolean)
+      .sort();
+    const ends = stage.workStages
+      .map((w) => w.plannedEnd)
+      .filter(Boolean)
+      .sort();
+    if (starts.length > 0 && ends.length > 0) {
+      return {
+        startDate: starts[0],
+        endDate: ends[ends.length - 1],
+      };
+    }
+  }
+  return {
+    startDate: stage.startDate || '2026-11-01',
+    endDate: stage.endDate || '2026-11-10',
+  };
+}
+
 export function createDefaultProject(
   overrides?: Partial<ProjectRecord>
 ): ProjectRecord {
@@ -37,70 +79,134 @@ export function createDefaultProject(
     projectDate: overrides?.projectDate || '2026-11-01',
     status: overrides?.status || 'active',
     currency: overrides?.currency || 'тыс. ₽',
+    areaM2: overrides?.areaM2 ?? 85,
     kp: overrides?.kp || { url: 'https://limurproject.ru/' },
     plan: overrides?.plan || { url: 'https://limurproject.ru/' },
     stages: overrides?.stages || [
       {
         id: 'stage-1',
-        name: 'Замеры',
-        amount: 0,
+        name: '1 этап оплаты (Замеры и планировка)',
+        amount: 30,
         paid: true,
         startDate: '2026-11-01',
-        endDate: '2026-11-05',
+        endDate: '2026-11-18',
+        workStages: [
+          {
+            id: 'ws-1-1',
+            title: 'Обмеры и фотофиксация',
+            assignee: 'Замеры',
+            plannedStart: '2026-11-01',
+            plannedEnd: '2026-11-05',
+            actualStart: '2026-11-01',
+            actualEnd: '2026-11-05',
+            progress: 100,
+            clientApproval: false,
+          },
+          {
+            id: 'ws-1-2',
+            title: 'Планировочное решение',
+            assignee: 'Дизайнер',
+            plannedStart: '2026-11-06',
+            plannedEnd: '2026-11-18',
+            actualStart: '2026-11-06',
+            actualEnd: '2026-11-17',
+            progress: 100,
+            clientApproval: true,
+          },
+        ],
       },
       {
         id: 'stage-2',
-        name: '1 этап',
-        amount: 30,
-        paid: true,
-        startDate: '2026-11-06',
-        endDate: '2026-11-18',
-      },
-      {
-        id: 'stage-3',
-        name: '2 этап',
+        name: '2 этап оплаты (3D-визуализация)',
         amount: 50,
         paid: true,
         startDate: '2026-11-19',
         endDate: '2026-12-05',
+        workStages: [
+          {
+            id: 'ws-2-1',
+            title: 'Концепция и подбор материалов',
+            assignee: 'Дизайнер',
+            plannedStart: '2026-11-19',
+            plannedEnd: '2026-11-25',
+            actualStart: '2026-11-19',
+            progress: 100,
+            clientApproval: true,
+          },
+          {
+            id: 'ws-2-2',
+            title: '3D-визуализация помещений',
+            assignee: 'Визер',
+            plannedStart: '2026-11-26',
+            plannedEnd: '2026-12-05',
+            actualStart: '2026-11-26',
+            progress: 80,
+            clientApproval: true,
+          },
+        ],
       },
       {
-        id: 'stage-4',
-        name: '3 этап',
+        id: 'stage-3',
+        name: '3 этап оплаты (Рабочие чертежи)',
         amount: 20,
         paid: false,
         startDate: '2026-12-06',
         endDate: '2026-12-20',
+        workStages: [
+          {
+            id: 'ws-3-1',
+            title: 'Альбом рабочих чертежей',
+            assignee: 'Чертёж',
+            plannedStart: '2026-12-06',
+            plannedEnd: '2026-12-16',
+            progress: 20,
+            clientApproval: false,
+          },
+          {
+            id: 'ws-3-2',
+            title: 'Финальное согласование проекта',
+            assignee: 'Дизайнер',
+            plannedStart: '2026-12-17',
+            plannedEnd: '2026-12-20',
+            progress: 0,
+            clientApproval: true,
+          },
+        ],
       },
     ],
     team: overrides?.team || [
       {
         id: 'team-1',
         role: 'Дизайнер',
+        payoutType: 'project',
         totalCost: 25,
         paidAmount: 20,
       },
       {
         id: 'team-2',
         role: 'Визер',
+        payoutType: 'project',
         totalCost: 20,
         paidAmount: 10,
       },
       {
         id: 'team-3',
         role: 'Чертёж',
+        payoutType: 'project',
         totalCost: 25,
         paidAmount: 1.5,
       },
       {
         id: 'team-4',
         role: 'Замеры',
+        payoutType: 'project',
         totalCost: 5,
         paidAmount: 5,
       },
       {
         id: 'team-5',
         role: 'Бенз и печать',
+        payoutType: 'project',
         totalCost: 5,
         paidAmount: 2.5,
       },
@@ -122,48 +228,113 @@ export function createNewProjectTemplate(index: number): ProjectRecord {
     projectDate: todayIso,
     status: 'active',
     currency: 'тыс. ₽',
+    areaM2: 85,
     kp: { url: 'https://limurproject.ru/' },
     plan: { url: 'https://limurproject.ru/' },
     stages: [
       {
         id: `st-${Date.now()}-1`,
-        name: 'Замеры',
-        amount: 0,
+        name: '1 этап оплаты (Замеры и планировка)',
+        amount: 30,
         paid: false,
         startDate: fmt(0),
-        endDate: fmt(4),
+        endDate: fmt(17),
+        workStages: [
+          {
+            id: `ws-${Date.now()}-1-1`,
+            title: 'Обмеры и фотофиксация',
+            assignee: 'Замеры',
+            plannedStart: fmt(0),
+            plannedEnd: fmt(4),
+            progress: 0,
+            clientApproval: false,
+          },
+          {
+            id: `ws-${Date.now()}-1-2`,
+            title: 'Планировочное решение',
+            assignee: 'Дизайнер',
+            plannedStart: fmt(5),
+            plannedEnd: fmt(17),
+            progress: 0,
+            clientApproval: true,
+          },
+        ],
       },
       {
         id: `st-${Date.now()}-2`,
-        name: '1 этап',
-        amount: 30,
-        paid: false,
-        startDate: fmt(5),
-        endDate: fmt(17),
-      },
-      {
-        id: `st-${Date.now()}-3`,
-        name: '2 этап',
+        name: '2 этап оплаты (3D-визуализация)',
         amount: 50,
         paid: false,
         startDate: fmt(18),
         endDate: fmt(34),
+        workStages: [
+          {
+            id: `ws-${Date.now()}-2-1`,
+            title: '3D-визуализация помещений',
+            assignee: 'Визер',
+            plannedStart: fmt(18),
+            plannedEnd: fmt(34),
+            progress: 0,
+            clientApproval: true,
+          },
+        ],
       },
       {
-        id: `st-${Date.now()}-4`,
-        name: '3 этап',
+        id: `st-${Date.now()}-3`,
+        name: '3 этап оплаты (Рабочие чертежи)',
         amount: 20,
         paid: false,
         startDate: fmt(35),
         endDate: fmt(49),
+        workStages: [
+          {
+            id: `ws-${Date.now()}-3-1`,
+            title: 'Альбом рабочих чертежей',
+            assignee: 'Чертёж',
+            plannedStart: fmt(35),
+            plannedEnd: fmt(49),
+            progress: 0,
+            clientApproval: true,
+          },
+        ],
       },
     ],
     team: [
-      { id: `tm-${Date.now()}-1`, role: 'Дизайнер', totalCost: 25, paidAmount: 0 },
-      { id: `tm-${Date.now()}-2`, role: 'Визер', totalCost: 20, paidAmount: 0 },
-      { id: `tm-${Date.now()}-3`, role: 'Чертёж', totalCost: 25, paidAmount: 0 },
-      { id: `tm-${Date.now()}-4`, role: 'Замеры', totalCost: 5, paidAmount: 0 },
-      { id: `tm-${Date.now()}-5`, role: 'Бенз и печать', totalCost: 5, paidAmount: 0 },
+      {
+        id: `tm-${Date.now()}-1`,
+        role: 'Дизайнер',
+        payoutType: 'project',
+        totalCost: 25,
+        paidAmount: 0,
+      },
+      {
+        id: `tm-${Date.now()}-2`,
+        role: 'Визер',
+        payoutType: 'project',
+        totalCost: 20,
+        paidAmount: 0,
+      },
+      {
+        id: `tm-${Date.now()}-3`,
+        role: 'Чертёж',
+        payoutType: 'project',
+        totalCost: 25,
+        paidAmount: 0,
+      },
+      {
+        id: `tm-${Date.now()}-4`,
+        role: 'Замеры',
+        payoutType: 'project',
+        totalCost: 5,
+        paidAmount: 0,
+      },
+      {
+        id: `tm-${Date.now()}-5`,
+        role: 'Бенз и печать',
+        payoutType: 'project',
+        totalCost: 5,
+        paidAmount: 0,
+      },
     ],
   };
 }
@@ -174,32 +345,85 @@ export const DEFAULT_STORE: MultiProjectStore = {
   projects: [createDefaultProject()],
 };
 
-function sanitizeDocument(raw: unknown, fallbackUrl = 'https://limurproject.ru/'): ProjectDocument {
+function sanitizeDocument(
+  raw: unknown,
+  fallbackUrl = 'https://limurproject.ru/'
+): ProjectDocument {
   if (!raw || typeof raw !== 'object') {
     return { url: fallbackUrl };
   }
   const doc = raw as Partial<ProjectDocument>;
   return {
     url: typeof doc.url === 'string' ? doc.url : fallbackUrl,
-    fileName: typeof doc.fileName === 'string' && doc.fileName ? doc.fileName : undefined,
+    fileName:
+      typeof doc.fileName === 'string' && doc.fileName
+        ? doc.fileName
+        : undefined,
     fileDataUrl:
-      typeof doc.fileDataUrl === 'string' && doc.fileDataUrl ? doc.fileDataUrl : undefined,
+      typeof doc.fileDataUrl === 'string' && doc.fileDataUrl
+        ? doc.fileDataUrl
+        : undefined,
   };
+}
+
+function sanitizeWorkStages(rawWorkStages: unknown, stagePaid: boolean): WorkStage[] {
+  if (!Array.isArray(rawWorkStages)) return [];
+  return rawWorkStages.map((ws, idx) => {
+    const w = (ws || {}) as Partial<WorkStage>;
+    return {
+      id: typeof w.id === 'string' && w.id ? w.id : `ws-${idx + 1}`,
+      title: typeof w.title === 'string' ? w.title : `Работа ${idx + 1}`,
+      assignee: typeof w.assignee === 'string' ? w.assignee : 'Дизайнер',
+      plannedStart:
+        typeof w.plannedStart === 'string' && w.plannedStart
+          ? w.plannedStart
+          : '2026-11-01',
+      plannedEnd:
+        typeof w.plannedEnd === 'string' && w.plannedEnd
+          ? w.plannedEnd
+          : '2026-11-10',
+      actualStart:
+        typeof w.actualStart === 'string' && w.actualStart
+          ? w.actualStart
+          : undefined,
+      actualEnd:
+        typeof w.actualEnd === 'string' && w.actualEnd
+          ? w.actualEnd
+          : undefined,
+      progress: Number.isFinite(Number(w.progress))
+        ? Math.min(100, Math.max(0, Number(w.progress)))
+        : stagePaid
+          ? 100
+          : 0,
+      clientApproval: Boolean(w.clientApproval),
+    };
+  });
 }
 
 function sanitizeStages(rawStages: unknown): ProjectStage[] {
   if (!Array.isArray(rawStages)) return createDefaultProject().stages;
   return rawStages.map((st, idx) => {
     const s = (st || {}) as Partial<ProjectStage>;
+    const paid = Boolean(s.paid);
+    const workStages = sanitizeWorkStages(s.workStages, paid);
     return {
       id: typeof s.id === 'string' && s.id ? s.id : `stage-${idx + 1}`,
       name: typeof s.name === 'string' ? s.name : `Этап ${idx + 1}`,
-      amount: Number.isFinite(Number(s.amount)) ? Math.max(0, Number(s.amount)) : 0,
-      paid: Boolean(s.paid),
+      amount: Number.isFinite(Number(s.amount))
+        ? Math.max(0, Number(s.amount))
+        : 0,
+      paid,
       startDate:
-        typeof s.startDate === 'string' && s.startDate ? s.startDate : '2026-11-01',
+        typeof s.startDate === 'string' && s.startDate
+          ? s.startDate
+          : '2026-11-01',
       endDate:
         typeof s.endDate === 'string' && s.endDate ? s.endDate : '2026-11-10',
+      progress: Number.isFinite(Number(s.progress))
+        ? Math.min(100, Math.max(0, Number(s.progress)))
+        : undefined,
+      clientApproval: Boolean(s.clientApproval),
+      workStages,
     };
   });
 }
@@ -208,9 +432,12 @@ function sanitizeTeam(rawTeam: unknown): TeamExpense[] {
   if (!Array.isArray(rawTeam)) return createDefaultProject().team;
   return rawTeam.map((member, idx) => {
     const m = (member || {}) as Partial<TeamExpense>;
+    const payoutType: PayoutType =
+      m.payoutType === 'salary' ? 'salary' : 'project';
     return {
       id: typeof m.id === 'string' && m.id ? m.id : `team-${idx + 1}`,
       role: typeof m.role === 'string' ? m.role : `Статья ${idx + 1}`,
+      payoutType,
       totalCost: Number.isFinite(Number(m.totalCost))
         ? Math.max(0, Number(m.totalCost))
         : 0,
@@ -239,7 +466,9 @@ function sanitizeProject(raw: unknown, idx: number): ProjectRecord {
     : rawTitle;
 
   const legacyKp = Array.isArray(p.documents) ? p.documents[0]?.url : undefined;
-  const legacyPlan = Array.isArray(p.documents) ? p.documents[1]?.url : undefined;
+  const legacyPlan = Array.isArray(p.documents)
+    ? p.documents[1]?.url
+    : undefined;
 
   return {
     id: typeof p.id === 'string' && p.id ? p.id : `proj-${idx + 1}`,
@@ -254,7 +483,13 @@ function sanitizeProject(raw: unknown, idx: number): ProjectRecord {
         : '2026-11-01',
     status: p.status === 'archived' ? 'archived' : 'active',
     currency:
-      typeof p.currency === 'string' && p.currency.trim() ? p.currency : 'тыс. ₽',
+      typeof p.currency === 'string' && p.currency.trim()
+        ? p.currency
+        : 'тыс. ₽',
+    areaM2:
+      Number.isFinite(Number(p.areaM2)) && Number(p.areaM2) > 0
+        ? Number(p.areaM2)
+        : 85,
     kp: p.kp
       ? sanitizeDocument(p.kp)
       : sanitizeDocument({ url: legacyKp || 'https://limurproject.ru/' }),
@@ -278,8 +513,10 @@ export function normalizeMultiProjectStore(raw: unknown): MultiProjectStore {
     team?: unknown;
   };
 
-  // Support migrating legacy single-project JSON (from old localStorage or old Gist)
-  if (!Array.isArray(candidate.projects) && (candidate.stages || candidate.projectTitle)) {
+  if (
+    !Array.isArray(candidate.projects) &&
+    (candidate.stages || candidate.projectTitle)
+  ) {
     const migratedProject = sanitizeProject(candidate, 0);
     migratedProject.id = 'limur-default';
     return {
@@ -295,7 +532,8 @@ export function normalizeMultiProjectStore(raw: unknown): MultiProjectStore {
       : [createDefaultProject()];
 
   const activeExists = projects.some((p) => p.id === candidate.activeProjectId);
-  const firstActive = projects.find((p) => p.status === 'active') || projects[0];
+  const firstActive =
+    projects.find((p) => p.status === 'active') || projects[0];
   const sortOrder: SortOrder =
     candidate.sortOrder === 'oldest' ? 'oldest' : 'newest';
 
@@ -317,7 +555,6 @@ export function loadStoreFromStorage(): MultiProjectStore {
       return normalizeMultiProjectStore(JSON.parse(raw));
     }
 
-    // Migrate from legacy single-project storage if present
     const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (legacyRaw) {
       const migrated = normalizeMultiProjectStore(JSON.parse(legacyRaw));
@@ -335,7 +572,7 @@ export function saveStoreToStorage(store: MultiProjectStore): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
   } catch {
-    // Handle storage quota limits gracefully (e.g. very large file uploads)
+    // Handle storage quota limits gracefully
   }
 }
 

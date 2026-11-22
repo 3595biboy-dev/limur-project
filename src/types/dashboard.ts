@@ -4,6 +4,18 @@ export interface ProjectDocument {
   fileDataUrl?: string;
 }
 
+export interface WorkStage {
+  id: string;
+  title: string;
+  assignee: string;
+  plannedStart: string; // YYYY-MM-DD
+  plannedEnd: string;   // YYYY-MM-DD
+  actualStart?: string; // YYYY-MM-DD
+  actualEnd?: string;   // YYYY-MM-DD
+  progress: number;     // 0-100
+  clientApproval?: boolean;
+}
+
 export interface ProjectStage {
   id: string;
   name: string;
@@ -11,11 +23,17 @@ export interface ProjectStage {
   paid: boolean;
   startDate: string; // YYYY-MM-DD
   endDate: string;   // YYYY-MM-DD
+  progress?: number; // 0-100 fallback when workStages is empty
+  clientApproval?: boolean;
+  workStages: WorkStage[];
 }
+
+export type PayoutType = 'project' | 'salary';
 
 export interface TeamExpense {
   id: string;
   role: string;
+  payoutType?: PayoutType;
   totalCost: number;
   paidAmount: number;
 }
@@ -29,6 +47,7 @@ export interface ProjectRecord {
   projectDate: string; // YYYY-MM-DD
   status: ProjectStatus;
   currency: string;
+  areaM2?: number;
   kp: ProjectDocument;
   plan: ProjectDocument;
   stages: ProjectStage[];

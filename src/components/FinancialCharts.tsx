@@ -185,14 +185,21 @@ export const FinancialCharts: React.FC<FinancialChartsProps> = ({
             <span className="text-xs font-medium text-[#6B655D]">
               Расчётная маржа проекта:
             </span>
-            <span
-              className={`text-sm font-bold tabular-nums whitespace-nowrap ${
-                projectMargin >= 0 ? 'text-[#4E735D]' : 'text-[#C46D5E]'
-              }`}
-            >
-              {projectMargin > 0 ? '+' : ''}
-              {formatNumber(projectMargin)} {currency}
-            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              {projectMargin < 0 && (
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-[#FAF0EE] text-[#C46D5E] border border-[#C46D5E]/30">
+                  МИНУС
+                </span>
+              )}
+              <span
+                className={`text-sm font-bold tabular-nums whitespace-nowrap ${
+                  projectMargin >= 0 ? 'text-[#4E735D]' : 'text-[#C46D5E]'
+                }`}
+              >
+                {projectMargin > 0 ? '+' : ''}
+                {formatNumber(projectMargin)} {currency}
+              </span>
+            </div>
           </div>
         </div>
 

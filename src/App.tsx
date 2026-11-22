@@ -25,6 +25,7 @@ import {
   SyncState,
   TeamExpense,
   ViewMode,
+  WorkStage,
 } from './types/dashboard';
 import { Header } from './components/Header';
 import { ProjectWorkspaceBar } from './components/ProjectWorkspaceBar';
@@ -462,14 +463,25 @@ export default function App() {
   };
 
   const handleAddStage = () => {
-    const nextIdx = selectedProject.stages.length;
+    const nextIdx = selectedProject.stages.length + 1;
     const newStage: ProjectStage = {
       id: `stage-${Date.now()}`,
-      name: `${nextIdx} этап`,
+      name: `${nextIdx} этап оплаты`,
       amount: 15,
       paid: false,
       startDate: '2026-12-21',
       endDate: '2026-12-30',
+      workStages: [
+        {
+          id: `ws-${Date.now()}-1`,
+          title: 'Новая рабочая задача',
+          assignee: 'Дизайнер',
+          plannedStart: '2026-12-21',
+          plannedEnd: '2026-12-30',
+          progress: 0,
+          clientApproval: false,
+        },
+      ],
     };
     updateSelectedProject((proj) => ({
       ...proj,
@@ -493,10 +505,69 @@ export default function App() {
     }));
   };
 
+  const handleAddWorkStage = (stageId: string) => {
+    updateSelectedProject((proj) => ({
+      ...proj,
+      stages: proj.stages.map((st) => {
+        if (st.id !== stageId) return st;
+        const newWork: WorkStage = {
+          id: `ws-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+          title: `Задача ${st.workStages.length + 1}`,
+          assignee: 'Дизайнер',
+          plannedStart: st.startDate || '2026-11-01',
+          plannedEnd: st.endDate || '2026-11-10',
+          progress: 0,
+          clientApproval: false,
+        };
+        return {
+          ...st,
+          workStages: [...st.workStages, newWork],
+        };
+      }),
+    }));
+  };
+
+  const handleUpdateWorkStage = (
+    stageId: string,
+    workId: string,
+    patch: Partial<WorkStage>
+  ) => {
+    updateSelectedProject((proj) => ({
+      ...proj,
+      stages: proj.stages.map((st) => {
+        if (st.id !== stageId) return st;
+        return {
+          ...st,
+          workStages: st.workStages.map((ws) =>
+            ws.id === workId ? { ...ws, ...patch } : ws
+          ),
+        };
+      }),
+    }));
+  };
+
+  const handleDeleteWorkStage = (stageId: string, workId: string) => {
+    updateSelectedProject((proj) => ({
+      ...proj,
+      stages: proj.stages.map((st) => {
+        if (st.id !== stageId) return st;
+        return {
+          ...st,
+          workStages: st.workStages.filter((ws) => ws.id !== workId),
+        };
+      }),
+    }));
+  };
+
+  const handleUpdateAreaM2 = (areaM2: number) => {
+    updateSelectedProject((proj) => ({ ...proj, areaM2 }));
+  };
+
   const handleAddTeamItem = () => {
     const newItem: TeamExpense = {
       id: `team-${Date.now()}`,
       role: 'Новая статья',
+      payoutType: 'project',
       totalCost: 10,
       paidAmount: 0,
     };
@@ -666,6 +737,9 @@ export default function App() {
           onAddStage={handleAddStage}
           onUpdateStage={handleUpdateStage}
           onDeleteStage={handleDeleteStage}
+          onAddWorkStage={handleAddWorkStage}
+          onUpdateWorkStage={handleUpdateWorkStage}
+          onDeleteWorkStage={handleDeleteWorkStage}
         />
 
         <FinancialCharts
@@ -680,10 +754,12 @@ export default function App() {
         <TeamTable
           team={selectedProject.team}
           currency={selectedProject.currency}
+          areaM2={selectedProject.areaM2 ?? 85}
           mode={mode}
           totalTeamCost={metrics.totalTeamCost}
           paidTeamAmount={metrics.paidTeamAmount}
           remainingTeamPay={metrics.remainingTeamPay}
+          onUpdateAreaM2={handleUpdateAreaM2}
           onAddTeamItem={handleAddTeamItem}
           onUpdateTeamItem={handleUpdateTeamItem}
           onDeleteTeamItem={handleDeleteTeamItem}
